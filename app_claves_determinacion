@@ -1,0 +1,144 @@
+
+library(data.table)
+library(janeaustenr)
+library(tidytext)
+library(dplyr)
+library(stringr)
+library(ggplot2)
+library(tidyr)
+library(sqldf)
+library(purrr)
+library(readr)
+library(widyr)
+library(igraph)
+library(ggraph)
+library(wordcloud)
+
+library(shiny)
+
+# Define UI for application that draws a histogram
+ui <- fluidPage(
+  
+  navbarPage(
+    title = 'Scarabaeoidea: Claves de determinacion',
+    tabPanel('Exploracion de claves',DT::dataTableOutput('ex1')),
+    
+    tabPanel('Analisis',
+             
+             
+             # Application title
+             titlePanel("Text Minig de las Claves de Determinacion de los Scarabaeoidea de la Peninsula Iberica"),
+             
+             fluidRow(
+               column(3, wellPanel(
+                 selectInput("input_type","Genero",
+                             c("Scarabeus","Bubas","Ontophagus","Copris"
+                             )
+                 )
+               )),
+               
+               column(3, wellPanel(
+                 #Esta es la salidad dinamica del UI component
+                 uiOutput("ui")
+               ))
+             ),
+             
+             radioButtons("Palabras_clave","Terminos a mostrar:",
+                          c("Pronoto","Cabeza","Tibia","Elitros","Torax")),
+             
+             
+             # Sidebar with a slider input for number of frequencys 
+             sidebarLayout(
+               sidebarPanel(
+                 sliderInput("freq",
+                             "Numero de ocurrencias:",
+                             min = 1,
+                             max = 20,
+                             value = 10)
+               ),
+               
+               
+               
+               # Show a plot of the generated distribution
+               mainPanel(
+                 plotOutput("distPlot",width = 400, height = 400),
+                 uiOutput("grafico")
+               )
+               
+             )
+             
+    ),
+    tabPanel("About Page", 
+             h4("This app uses navbar for layout & mtcars dataset for demo")
+    )
+  )
+)
+
+# Define server logic required to draw a histogram
+server <- function(input, output) {
+  
+  output$ex1 <- DT::renderDataTable({
+    DT::datatable(claves_scarabeus, options = list(pageLength = 25))},server=FALSE
+  )
+  
+  output$ui <- renderUI({
+    if (is.null(input$input_type))
+      return()
+    
+    switch (input$input_type,
+            "Scarabeus" = selectInput("dynamic","Especie",
+                                      choices = c("sacer",
+                                                  "laticollis",
+                                                  "puncticollis",
+                                                  "semipunctatus","cicatricosus")),
+            
+            
+            "Bubas" = selectInput("dynamic","Especie",
+                                  choices = c("bison",
+                                              "bubalus")),
+            
+            "Copris" = selectInput("dynamic","Especie",
+                                   choices = c("hispanus",
+                                               "lunaris"))
+    )
+    
+    
+  })
+  
+  
+  # output$distPlot <- renderPlot({
+  #   ifelse(input$input_type=="Scarabeus",scarabeustext(input, word, n),
+  #   copristext(input, word, n))
+  
+  # })
+  
+  output$distPlot <- renderPlot({
+    for(i in 1:7){
+      ifelse(input$dynamic ==paste0(ldf[[i]]$especie),print(get(paste0(ldf[[i]]$especie,"_t")) %>%
+                                                              count(word, sort = TRUE) %>%
+                                                              filter(n >=1) %>%
+                                                              mutate(word = reorder(word, n)) %>%
+                                                              ggplot(aes(word, n)) +
+                                                              geom_col() +
+                                                              xlab(NULL) +
+                                                              coord_flip()),0)
+    }
+    
+  })
+  
+  
+  output$input_type_text <- renderText({
+    input$input_type
+  })
+  
+  output$dynamic_value <- renderPrint({
+    str(input$dynamic)
+  })
+  
+  
+  
+}
+
+# Run the application 
+shinyApp(ui = ui, server = server)
+
