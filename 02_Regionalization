@@ -1,0 +1,1416 @@
+#****************************************************************************#
+#****************************************************************************#
+#                             REGIONALIZATION                                #
+#****************************************************************************#
+#****************************************************************************#
+
+
+
+#### *****************************  LIBRARYS ****************************####
+
+library(raster)
+library(dplyr)
+library(sp)
+library(rgdal)
+library(sqldf)
+library(ggalt)
+library(dbscan)
+library(cba)
+library(factoextra)
+library(fpc)
+library(leaflet)
+library(LICORS)
+library(EMCluster)
+library(FPDclustering)
+library(mapview)
+
+#### *****************************  FUNCTIONS ****************************####
+
+# Media para cada cluster estimado
+
+meanvar_cluster <- function(x) {
+  apply(x,2,mean)
+}
+
+# Función para dibujar abundancia de generos en mapa leaflet
+
+map_distribution <- function(x) {
+  color <- c(rep("red",nrow(x)), rep("blue",nrow(x)))
+  tamano <- x$abundancia
+  titulo <- as.factor(x$Genus)
+  df <- data.frame(lon=as.integer(x$lon), lat=as.integer(x$lat), color, tamano, titulo)
+  
+  leaflet(df) %>% addTiles() %>%
+    addCircles(lng = ~as.integer(x$lon), lat = ~as.integer(x$lat), weight = 1, color=~color,
+               radius = ~tamano * 10, popup = ~titulo
+    )
+}
+
+
+#### **********************  LECTURA DE DATOS  ****************************####
+
+# load("C:/Users/jose/Documents/BD Aguilar/Trabajo/BBDD_General/REGIONALIZACION/datos_regionalizacion.RData")
+
+#*******************************************************************************************#
+# 0-CONSTRUCCION DE DATASET  #### 
+#*******************************************************************************************#
+
+#Creamos las variables necesarias para los modelos de clasificacion y seleccionamos una muestra del total de datos 
+
+muestra <- sample_frac(DF,0.14)
+datregio_ambientales <- muestra[,1:23]
+#datregio_ambientales_matrix<-as.matrix(datregio_ambientales)
+
+# Construimos polinomio de grado 3
+datregio_ambientales <- datregio_ambientales %>% mutate(lat2=lat*lat,
+                                                        latlon = lat*lon,
+                                                        lon2 = lon^2,
+                                                        lat3 = lat^3,
+                                                        lat2lon = lat^2*lon,
+                                                        latlon2 = lat*lon^2,
+                                                        lon3 = lon^3
+)%>% mutate(poli3=lat + lon + lat2 + latlon + lon2 + lat3 + lat2lon + latlon2 + lon3)
+
+#-------------------------------------------------------------------------------
+#Construimos coordenadas principales a partir de la matriz de distancia de las coordenadas euclidianas (UTM)
+#-------------------------------------------------------------------------------
+
+
+xy <- data.frame(cbind(round(datregio_ambientales[, 'lon'], 5), round(datregio_ambientales[, 'lat'], 5))) #Rounded the decimals out of doubt of it interfering later
+
+xy <- SpatialPoints(coords = xy,
+                    proj4string =  CRS('+proj=longlat +datum=WGS84 +ellps=WGS84 +towgs84=0,0,0 '))
+
+xy_utm <- spTransform(xy, CRS('+proj=utm +north +ellps=WGS84 +datum=WGS84 +units=m +no_defs +towgs84:0,0,0'))
+
+xy_utm_df<-data_frame(x=xy_utm@coords[1:2719397,"X1"],y=xy_utm@coords[1:2719397,"X2"]) # Para la mustra de Kmeans y DBSCAN
+xy_utm_df<-data_frame(x=xy_utm@coords[1:369061,"lon"],y=xy_utm@coords[1:369061,"lat"]) # Para la muestra de PDC
+
+
+datregio_ambientales<-cbind(datregio_ambientales,xy_utm_df)
+
+coord_ambientales<-data.frame(lon=datregio_ambientales$x,lat=datregio_ambientales$y)
+
+
+distgab<-knndatregio_ambientales<-kNN(coord_ambientales,k=22,search="kdtree")
+distgab2<-distgab$dist
+
+mite.dbmem1<-prcomp(distgab2, scale = TRUE)
+
+PVE <- 100*mite.dbmem1$sdev^2/sum(mite.dbmem1$sdev^2)
+PVE
+
+prop_varianza_acum <- cumsum(PVE)
+prop_varianza_acum
+
+#Seleccionamos 3 Coordenadas principales que representan el 93% de variabilidad
+
+pco <-data.frame(mite.dbmem1[["x"]])
+
+data<-cbind(datregio_ambientales,PC1=pco[1],PC2=pco[2],PC3=pco[3])
+
+#-------------------------------------------------------------------------------
+#Construimos coordenadas principales a partir de la matriz de distancia de las coordenadas euclidianas (UTM) ponderando por  MDE
+#-------------------------------------------------------------------------------
+
+library(elevatr)
+
+xy <- data.frame(cbind(round(datregio_ambientales[, 'lon'], 5), round(datregio_ambientales[, 'lat'], 5))) #Rounded the decimals out of doubt of it interfering later
+
+xy <- SpatialPoints(coords = xy,
+                    proj4string =  CRS('+proj=longlat +datum=WGS84 +ellps=WGS84 +towgs84=0,0,0 '))
+
+xy_utm <- spTransform(xy, CRS('+proj=utm +north +ellps=WGS84 +datum=WGS84 +units=m +no_defs +towgs84:0,0,0'))
+
+xy_utm_df<-data_frame(xy_utm@coords)
+xy_utm_df<-data_frame(x=xy_utm_df$`xy_utm@coords`[,1],y=xy_utm_df$`xy_utm@coords`[,2]) # Para la muestra de Kmeans y DBSCAN
+#xy_utm_df<-data_frame(x=xy_utm@coords[1:427334,"lon"],y=xy_utm@coords[1:427334,"lat"]) # Para la muestra de PDC
+
+
+datregio_ambientales<-cbind(datregio_ambientales,xy_utm_df)
+coord_ambientales<-data.frame(lon=datregio_ambientales$x,lat=datregio_ambientales$y)
+
+#Obtenemos un modelo de elevacion del terreno (MDE)
+elevation = get_elev_raster(coord_ambientales,z=8,prj = '+proj=utm +north +ellps=WGS84 +datum=WGS84 +units=m +no_defs +towgs84:0,0,0')
+extract_elevation<-extract(elevation,coord_ambientales)
+extract_elevation[is.na(extract_elevation)] <- 0
+
+#Ponderacion proporcional
+elevation_df<-data.frame(extract_elevation)
+elevation_df$pond<-0
+
+elevation_df$pond<-ifelse(elevation_df$extract_elevation==4056,1,elevation_df$pond)
+elevation_df$pond<-ifelse(elevation_df$extract_elevation>=3500 & elevation_df$extract_elevation<4056,0.9 ,elevation_df$pond)
+elevation_df$pond<-ifelse(elevation_df$extract_elevation>=2500 & elevation_df$extract_elevation<3500,0.8 ,elevation_df$pond)
+elevation_df$pond<-ifelse(elevation_df$extract_elevation>=1500 & elevation_df$extract_elevation<2500,0.7 ,elevation_df$pond)
+elevation_df$pond<-ifelse(elevation_df$extract_elevation>=1000 & elevation_df$extract_elevation<1500,0.6 ,elevation_df$pond)
+elevation_df$pond<-ifelse(elevation_df$extract_elevation>=500 & elevation_df$extract_elevation<1000,0.5 ,elevation_df$pond)
+elevation_df$pond<-ifelse(elevation_df$extract_elevation>=300 & elevation_df$extract_elevation<500,0.4 ,elevation_df$pond)
+elevation_df$pond<-ifelse(elevation_df$extract_elevation>=200 & elevation_df$extract_elevation<300,0.3 ,elevation_df$pond)
+elevation_df$pond<-ifelse(elevation_df$extract_elevation>=100 & elevation_df$extract_elevation<200,0.2 ,elevation_df$pond)
+elevation_df$pond<-ifelse(elevation_df$extract_elevation>=50 & elevation_df$extract_elevation<100,0.1 ,elevation_df$pond)
+elevation_df$pond<-ifelse(elevation_df$extract_elevation<50,0 ,elevation_df$pond)
+
+datregio_ambientales<-cbind(datregio_ambientales,xy_utm_df,extract_elevation,pond_elevation=elevation_df$pond)
+
+distgab<-knndatregio_ambientales<-kNN(coord_ambientales,k=22,search="kdtree")
+
+distancia<-data.frame(distgab$dist)
+distancia2<-distancia*datregio_ambientales$pond_elevation
+
+mite.dbmem1<-prcomp(distancia2)
+
+PVE <- 100*mite.dbmem1$sdev^2/sum(mite.dbmem1$sdev^2)
+PVE
+
+prop_varianza_acum <- cumsum(PVE)
+prop_varianza_acum
+
+#Seleccionamos 3 Coordenadas principales que representan el 98% de variabilidad
+
+pco <-data.frame(mite.dbmem1[["x"]])
+
+data<-cbind(datregio_ambientales,PC1=pco[1],PC2=pco[2],PC3=pco[3])
+
+#*******************************************************************************************#
+# 1-DBSCAN sin contiguidad espacial #### 
+#*******************************************************************************************#
+
+#Me quedo solo con las variables a utilizar en la clasificacion
+
+# muestra <- sample_frac(DF,0.14)
+# datregio_ambientales <- muestra[,3:23]
+# datregio_ambientales_matrix<-as.matrix(datregio_ambientales)
+
+datregio_scale <- scale(data[,3:23])
+datregio_ambientales <- data[,3:23]
+#### Conozcamos como son los vecinos para cada observación
+
+
+system.time(knndatregio_ambientales<-kNN(muestra,k=60,search="kdtree"))
+#system.time(knndatregio_ambientales<-kNN(datregio_ambientales,k=5,search="dist"))
+
+mean(knndatregio_ambientales$dist)
+
+plot(knndatregio_ambientales,muestra)
+set.seed(12498)
+dbscan::kNNdistplot(datregio_scale, k = 293)
+abline(h = 1.3, lty = 2)
+abline(h = 0.5, lty = 2)
+
+set.seed(12498)
+# dbscan package
+resultados_dbscan_0 <- dbscan::dbscan(datregio_scale, 85 ,200)
+
+resultados_dbscan<-resultados_dbscan_0
+
+resultados_dbscan<-data.frame(resultados_dbscan$cluster,iter=36)
+resultados_dbscan.df_36<-resultados_dbscan
+
+#Bucle para ir guardando los resultados de los cluster estimados con DBSCAN. Viendo el gráfico KNNdistplot se estable el rango de búsqueda de un eps entre los valores 1 al 4
+for(i in seq(0.5,1,by=1)){
+  
+  db<-dbscan::dbscan(muestra[,3:23], i ,36)
+  resultados_dbscan.df_36<-rbind(resultados_dbscan.df_36,data.frame(resultados_dbscan.cluster=db$cluster,iter=i))
+
+}
+#Seleccionamos la iteracion con el nº de cluster mas parecido al de referencia, Olson
+resultados_dbscan.df_36%>%filter(iter==36)%>%table()
+#eps =70
+#min_points=36
+
+#MODELO SELECCIONADO
+modelo_DBSCAN_SC <- dbscan::dbscan(datregio_ambientales, 355 ,79)
+
+datregio_ambientales_DBSCAN_SC<-cbind(muestra,modelo_DBSCAN_SC$cluster)
+
+colnames(datregio_ambientales_DBSCAN_SC)[colnames(datregio_ambientales_DBSCAN_SC)%in%c("modelo_DBSCAN_SC$cluster")]<-c("Regions")
+
+#GRAFICO DE RESULTADO
+
+library(tidyverse)
+
+
+ggplot() +
+  borders("world", c("spain", "portugal","france","morocco"))+
+  geom_tile(data = datregio_ambientales_DBSCAN_SC , aes(x = datregio_ambientales_DBSCAN_SC$lon,
+                                                        y = datregio_ambientales_DBSCAN_SC$lat,
+                                                        width =0.21,
+                                                        height=0.21,
+                                                        fill=as.factor(Regions)))+
+  scale_fill_discrete(name="Regions")+
+  coord_equal()
+
+write.csv(datregio_ambientales_DBSCAN_SC,file="C:/Users/joses/OneDrive/Documents/BD Aguilar/Trabajo/BBDD_General/REGIONALIZACION/Graficos/DBSCAN_22.csv")
+
+
+
+#*******************************************************************************************#
+# 1-DBSCAN con contiguidad espacial  #### 
+#*******************************************************************************************#
+
+#**************************************************
+#MODELO INCLUYENDO TSM
+#**************************************************
+
+#Me quedo solo con las variables a utilizar en la clasificacion
+
+datregio_ambientales<-data[,1:31]
+datregio_ambientales <- datregio_ambientales %>% dplyr::select (-"ph",-"lat2",-"latlon",-"lon2",-"lat3",-"lat2lon",-"latlon2",-"lon3")
+
+#muestra
+datregio_ambientales2<-sample_frac(datregio_ambientales,0.135)
+
+datregio_ambientales_matrix<-as.matrix(datregio_ambientales)
+
+#### Conozcamos como son los vecinos para cada observación
+
+system.time(knndatregio_ambientales<-kNN(datregio_ambientales,k=60,search="kdtree"))
+#system.time(knndatregio_ambientales<-kNN(datregio_ambientales,k=5,search="dist"))
+
+mean(knndatregio_ambientales$dist)
+
+plot(knndatregio_ambientales,muestra)
+
+dbscan::kNNdistplot(datregio_ambientales, k = 293)
+abline(h = 500, lty = 2)
+abline(h = 2000, lty = 2)
+
+set.seed(12498)
+# dbscan package
+resultados_dbscan_0 <- dbscan::dbscan(datregio_ambientales, 2000 ,293)
+
+resultados_dbscan<-resultados_dbscan_0
+
+resultados_dbscan<-data.frame(resultados_dbscan$cluster,iter=2000)
+resultados_dbscan.df<-resultados_dbscan
+
+#Bucle para ir guardando los resultados de los cluster estimados con DBSCAN. Viendo el gráfico KNNdistplot se estable el rango de búsqueda de un eps entre los valores 1200 al 1500
+for(i in seq(1000,2000,by=50)){
+  
+  db<-dbscan::dbscan(datregio_ambientales, i ,293)
+  resultados_dbscan.df<-rbind(resultados_dbscan.df,data.frame(resultados_dbscan.cluster=db$cluster,iter=i))
+  
+}
+#Seleccionamos la iteracion con el nº de cluster mas parecido al de referencia, Olson
+resultados_dbscan.df%>%filter(iter==1350)%>%table()
+#eps =70
+#min_points=36
+
+#MODELO SELECCIONADO
+modelo_DBSCAN_CC2 <- dbscan::dbscan(datregio_ambientales2, 204 ,18)
+
+datregio_ambientales_DBSCAN_CC<-cbind(datregio_ambientales2,modelo_DBSCAN_CC2$cluster)
+
+colnames(datregio_ambientales_DBSCAN_CC)[colnames(datregio_ambientales_DBSCAN_CC)%in%c("modelo_DBSCAN_CC2$cluster")]<-c("Regions")
+
+#GRAFICO DE RESULTADO
+
+library(tidyverse)
+
+
+ggplot() +
+  borders("world", c("spain", "portugal","france","morocco"))+
+  geom_tile(data = datregio_ambientales_DBSCAN_CC , aes(x = lon,
+                                                        y = lat,
+                                                        width =0.21,
+                                                        height=0.21,
+                                                        fill=as.factor(Regions)))+
+  scale_fill_discrete(name="Regions")+
+  coord_equal()
+
+
+write.csv(datregio_ambientales_DBSCAN_CC,file="C:/Users/joses/OneDrive/Documents/BD Aguilar/Trabajo/BBDD_General/REGIONALIZACION/Graficos/DBSCAN_TSA22.csv")
+
+
+#**************************************************
+#MODELO INCLUYENDO mapping eigenvectors
+#**************************************************
+
+
+df_DBSCAN_PCO<-cbind(data[,1:23],PC1=pco[1],PC2=pco[2],PC3=pco[3])
+DBSCAN.PCO<-dbscan::dbscan(df_DBSCAN_PCO, 1350 ,293) # Toda observacion como noise
+
+#Busqueda de eps y minPts mas apropiadaso para el modelo con autovectores
+dbscan::kNNdistplot(df_DBSCAN_PCO, k = 300)
+abline(h = 160, lty = 2)
+
+DBSCAN.PCO_0<-dbscan::dbscan(df_DBSCAN_PCO, 160 ,300)
+
+DBSCAN.PCO<-DBSCAN.PCO_0
+
+DBSCAN.PCO<-data.frame(DBSCAN.PCO$cluster,iter=160)
+DBSCAN.PCO_df<-DBSCAN.PCO
+
+#Bucle para ir guardando los resultados de los cluster estimados con DBSCAN. Viendo el gráfico KNNdistplot se estable el rango de búsqueda de un eps entre los valores 1200 al 1500
+for(i in seq(80,200,by=5)){
+  
+  db<-dbscan::dbscan(df_DBSCAN_PCO, i ,300)
+  DBSCAN.PCO_df<-rbind(DBSCAN.PCO_df,data.frame(DBSCAN.PCO.cluster=db$cluster,iter=i))
+  
+}
+#Seleccionamos la iteracion con el nº de cluster mas parecido al de referencia, Olson
+DBSCAN.PCO_df%>%filter(iter==105)%>%table()
+
+DBSCAN.PCO_df %>% group_by(iter)%>%table()
+#eps =85
+#min_points=300
+
+#MODELO SELECCIONADO
+modelo_DBSCAN_pco_22 <-dbscan::dbscan(df_DBSCAN_PCO, 78 ,253)
+modelo_DBSCAN_pco_22
+
+datregio_ambientales_DBSCAN_pco<-cbind(df_DBSCAN_PCO,modelo_DBSCAN_pco$cluster)
+datregio_ambientales_DBSCAN_pco19<-cbind(df_DBSCAN_PCO,modelo_DBSCAN_pco_19$cluster)
+datregio_ambientales_DBSCAN_pco22<-cbind(df_DBSCAN_PCO,modelo_DBSCAN_pco_22$cluster)
+
+colnames(datregio_ambientales_DBSCAN_pco22)[colnames(datregio_ambientales_DBSCAN_pco22)%in%c("modelo_DBSCAN_pco_22$cluster")]<-c("Regions")
+
+
+#GRAFICO RESULTADOS
+
+ggplot() +
+  borders("world", c("spain", "portugal","france","morocco"))+
+  geom_tile(datregio_ambientales_DBSCAN_pco22 , mapping=aes(x = lon,
+                                                        y = lat,
+                                                        width =0.21,
+                                                        height=0.21,
+                                                        fill=as.factor(Regions)))+
+  scale_fill_discrete(name="Regions")+
+  coord_equal()
+
+
+#Para poder representar bien en Qgis paso el grupo de noise a una numeracion diferente a la 0
+datregio_ambientales_DBSCAN_pco22$Regions<-ifelse(datregio_ambientales_DBSCAN_pco22$Regions==0,21,datregio_ambientales_DBSCAN_pco22$Regions)
+
+write.csv(datregio_ambientales_DBSCAN_pco22,file="C:/Users/joses/OneDrive/Documents/BD Aguilar/Trabajo/BBDD_General/REGIONALIZACION/Graficos/DBSCAN_PCO.csv")
+
+
+table(datregio_ambientales_DBSCAN_pco22$Regions)
+
+#*******************************************************************************************#
+# 2-KMEANS sin contiguidad espacial #### 
+#*******************************************************************************************#
+
+
+#Separamos en train y test
+
+datregio_ambientales <-data
+datregio_ambientales <- data[,3:23]
+datregio_ambientales_matrix<-as.matrix(datregio_ambientales)
+
+
+set.seed(1548)
+indice <- sample(2, nrow(datregio_ambientales), replace = TRUE, prob = c(0.7, 0.3))
+data_train <- datregio_ambientales[indice == 1, ]
+data_test <- datregio_ambientales[indice == 2, ] 
+
+
+#Determinar el nº de clusters para train (No run, sobre pasa la RAM)
+# fviz_nbclust(data_train, kmeans, method = "wss") +
+#   geom_vline(xintercept = 3, linetype = 2)
+
+
+x <- NULL
+for ( i in 1:20 ){
+  kc     <- kmeans( data_train, i )
+  x[ i ] <- kc$tot.withinss
+}
+plot( c( 1:20 ), x, type = "b" )
+
+
+#Determinar el nº de clusters para test (No run)
+# fviz_nbclust(data_test, kmeans, method = "wss") +
+#   geom_vline(xintercept = 3, linetype = 2)
+
+x <- NULL
+for ( i in 1:25 ){
+  kc     <- kmeans( data_test, i )
+  x[ i ] <- kc$tot.withinss
+}
+plot( c( 1:25 ), x, type = "b" )
+
+
+
+#Representacion de los cluster para train
+
+set.seed(7854)
+clusters_train <-kmeans(data_train, centers=15)
+str(clusters_train)
+
+fviz_cluster(clusters_train, data_train, geom = "point")
+plot(data_train, col = clusters_train$cluster + 1L, pch = clusters_train$cluster + 1L)
+
+fviz_cluster(clusters_train, data = data_train, 
+             stand = FALSE, ellipse = TRUE, 
+             show.clust.cent = TRUE, 
+             geom = "point",palette = "jco", 
+             ggtheme = theme_classic())
+
+
+#Representacion de los cluster para test
+set.seed(7854)
+clusters_test <-kmeans(data_test, centers=15)
+str(clusters_test)
+
+fviz_cluster(clusters_test, data_test, geom = "point")
+plot(data_test, col = clusters_test$cluster + 1L, pch = clusters_test$cluster + 1L)
+
+fviz_cluster(clusters_test, data = data_test, 
+             stand = FALSE, ellipse = TRUE, 
+             show.clust.cent = TRUE, 
+             geom = "point", 
+             ggtheme = theme_classic())
+
+#Aplicamos kmeans a todo el conjunto de datos
+
+datregio_scale <- scale(datregio_ambientales)
+clusters_15 <-kmeans(datregio_scale, centers=15)
+clusters_22 <-kmeans(datregio_scale, centers=22)
+
+str(clusters_15)
+
+datregio_ambientales_KMEANS15<-cbind(data[,1:23],Regions=clusters_15$cluster)
+datregio_ambientales_KMEANS22<-cbind(data[,1:23],Regions=clusters_22$cluster)
+
+ggplot() +
+  borders("world", c("spain", "portugal","france","morocco"))+
+  geom_tile(data = datregio_ambientales_KMEANS22 , aes(x = lon,
+                                                       y = lat,
+                                                       width =0.05,
+                                                       height=0.05,
+                                                       fill=as.factor(Regions),
+                                                       color=as.factor(Regions)))+
+  scale_fill_manual(values = c("#D93535","#D2403F","#CB4A4A","#C35554",
+                               "#BC5F5E","#B56A69","#AE7473","#A77F7D",
+                               "#A08A88","#989492","#919F9C","#8AA9A6",
+                               "#83B4B1","#7CBEBB","#74C9C5"))+
+  coord_equal()
+
+
+
+#y si  cogmos 5 cluster?####
+
+datregio_scale <- scale(datregio_ambientales)
+clusters <-kmeans(datregio_scale, centers=5)
+str(clusters)
+
+fviz_cluster(clusters, datregio_scale, geom = "point")
+plot(data_test, col = clusters$cluster + 1L, pch = clusters$cluster + 1L)
+
+fviz_cluster(clusters, data = datregio_scale, 
+             stand = FALSE, ellipse = TRUE, 
+             show.clust.cent = TRUE, 
+             geom = "point", 
+             ggtheme = theme_classic())
+
+datregio_ambientales_KMEANS5<-cbind(data[,1:23],Regions=as.factor(clusters$cluster))
+
+ggplot() +
+  borders("world", c("spain", "portugal","france","morocco"))+
+  geom_tile(data = datregio_ambientales_KMEANS5 %>% filter(Regions==2) , aes(x = lon,
+                                                     y = lat,
+                                                     width =0.10,
+                                                     height=0.10,
+                                                     fill=as.factor(Regions)))+
+  scale_fill_discrete(name="Regions")+
+  coord_equal()
+
+
+
+#y si  cogmos 23 cluster?####
+
+datregio_scale <- scale(datregio_ambientales)
+clusters23 <-kmeans(datregio_scale, centers=23)
+str(clusters23)
+
+fviz_cluster(clusters23, datregio_scale, geom = "point")
+plot(data_test, col = clusters23$cluster + 1L, pch = clusters23$cluster + 1L)
+
+fviz_cluster(clusters23, data = datregio_scale, 
+             stand = FALSE, ellipse = TRUE, 
+             show.clust.cent = TRUE, 
+             geom = "point", 
+             ggtheme = theme_classic())
+
+datregio_ambientales_KMEANS23<-cbind(data[,1:23],Regions=as.factor(clusters23$cluster))
+
+# ggplot() +
+#   borders("world", c("spain", "portugal","france","morocco"))+
+#   geom_tile(data = datregio_ambientales_KMEANS19 , aes(x = lon,
+#                                                       y = lat,
+#                                                       width =0.05,
+#                                                       height=0.05,
+#                                                       fill=Regions,
+#                                                       color=Regions, shape=Regions))+
+#   scale_fill_manual(values = c("#D93535","#D2403F","#CB4A4A","#C35554",
+#                                "#BC5F5E","#B56A69","#AE7473","#A77F7D",
+#                                "#A08A88","#989492","#919F9C","#8AA9A6",
+#                                "#83B4B1","#7CBEBB","#74C9C5","#90C9C5","#8AA7A6","#CB5A4A","#93B4B1"))+
+#   coord_equal()
+# 
+
+ggplot() +
+  borders("world", c("spain", "portugal","france","morocco","azores"))+
+  geom_tile(data = datregio_ambientales_KMEANS23, aes(x = lon,
+                                                      y = lat,
+                                                      width =0.10,
+                                                      height=0.10,
+                                                      fill=as.factor(Regions)))+
+  scale_fill_discrete(name="Regions")+
+  coord_equal()
+
+write.csv(datregio_ambientales_KMEANS5,file="C:/Users/joses/OneDrive/Documents/BD Aguilar/Trabajo/BBDD_General/REGIONALIZACION/Graficos/KMEANS_SC5.csv")
+
+write.csv(datregio_ambientales_KMEANS22,file="C:/Users/joses/OneDrive/Documents/BD Aguilar/Trabajo/BBDD_General/REGIONALIZACION/Graficos/KMEANS_SC22.csv")
+
+
+
+#*******************************************************************************************#
+## 2- KMEANS con contiguidad espacial ####
+#*******************************************************************************************#
+
+datregio_ambientales <-data
+# datregio_ambientales <- datregio_ambientales %>% mutate(poli3=lat + lon + lat2 + latlon + 
+#                                                           lon2 + lat3 + lat2lon + latlon2 + lon3)
+# 
+datregio_ambientales<-cbind(data[,1:23],poli3=data[,"poli3"])
+ 
+
+#**************************************************
+#MODELO INCLUYENDO TSM
+#**************************************************
+set.seed(1547)
+indice <- sample(2, nrow(datregio_ambientales), replace = TRUE, prob = c(0.7, 0.3))
+data_train <- datregio_ambientales[indice == 1, ]
+data_test <- datregio_ambientales[indice == 2, ] 
+
+
+#Determinar el nº de clusters para train (No run, sobre pasa la RAM)
+# fviz_nbclust(data_train, kmeans, method = "wss") +
+#   geom_vline(xintercept = 3, linetype = 2)
+
+
+x <- NULL
+for ( i in 1:25 ){
+  kc     <- kmeans( data_train, i )
+  x[ i ] <- kc$tot.withinss
+}
+plot( c( 1:25 ), x, type = "b" )
+
+
+#Determinar el nº de clusters para test (No run)
+# fviz_nbclust(data_test, kmeans, method = "wss") +
+#   geom_vline(xintercept = 3, linetype = 2)
+
+x <- NULL
+for ( i in 1:25 ){
+  kc     <- kmeans( data_test, i )
+  x[ i ] <- kc$tot.withinss
+}
+plot( c( 1:25 ), x, type = "b" )
+
+
+#Representacion de los cluster para train
+
+set.seed(7854)
+clusters_train <-kmeans(data_train, centers=15)
+str(clusters_train)
+
+fviz_cluster(clusters_train, data_train, geom = "point")
+plot(data_train, col = clusters_train$cluster + 1L, pch = clusters_train$cluster + 1L)
+
+fviz_cluster(clusters_train, data = data_train, 
+             stand = FALSE, ellipse = TRUE, 
+             show.clust.cent = TRUE, 
+             geom = "point",palette = "jco", 
+             ggtheme = theme_classic())
+
+
+#Representacion de los cluster para test
+set.seed(7854)
+clusters_test <-kmeans(data_test, centers=15)
+str(clusters_test)
+
+fviz_cluster(clusters_test, data_test, geom = "point")
+plot(data_test, col = clusters_test$cluster + 1L, pch = clusters_test$cluster + 1L)
+
+fviz_cluster(clusters_test, data = data_test, 
+             stand = FALSE, ellipse = TRUE, 
+             show.clust.cent = TRUE, 
+             geom = "point", 
+             ggtheme = theme_classic())
+
+#Aplicamos kmeans a todo el conjunto de datos
+
+datregio_ambientales2<-cbind(data[,1:23],poli3=data[,"poli3"]) %>% sample_frac(size=0.40)
+
+datregio_scale <- scale(datregio_ambientales2)
+clusters_15 <-kmeanspp(datregio_scale, k=15)
+clusters_22 <-kmeanspp(datregio_scale, k=22)
+str(clusters_15)
+
+datregio_ambientales_KMEANS15_tsm<-cbind(data[,1:23],Regions=clusters_15$cluster)
+datregio_ambientales_KMEANS22_tsm<-cbind(datregio_ambientales2[,1:23],Regions=as.factor(clusters_22$cluster))
+
+ggplot() +
+  borders("world", c("spain", "portugal","france","morocco"))+
+  geom_tile(data = datregio_ambientales_KMEANS22_tsm , aes(x = lon,
+                                                       y = lat,
+                                                       width =0.05,
+                                                       height=0.05,
+                                                       fill=Regions,
+                                                       color=Regions))+
+  scale_fill_discrete(name="Regions")+
+  coord_equal()
+
+write.csv(datregio_ambientales_KMEANS22_tsm,file="C:/Users/joses/OneDrive/Documents/BD Aguilar/Trabajo/BBDD_General/REGIONALIZACION/Graficos/KMEANS_SC22_tsm.csv")
+
+
+#y si  cogmos 5 cluster?####
+
+datregio_scale <- scale(datregio_ambientales)
+clusters <-kmeanspp(datregio_scale, k=5)
+str(clusters)
+
+fviz_cluster(clusters, datregio_scale, geom = "point")
+plot(data_test, col = clusters$cluster + 1L, pch = clusters$cluster + 1L)
+
+fviz_cluster(clusters, data = datregio_scale, 
+             stand = FALSE, ellipse = TRUE, 
+             show.clust.cent = TRUE, 
+             geom = "point", 
+             ggtheme = theme_classic())
+
+datregio_ambientales_KMEANS5_tsm<-cbind(data[,1:23],Regions=clusters$cluster)
+
+#Por actualizar los datos de worldclim y no perder trabajo, he actualizado las variables bioclimáticas partiendo del fichero que ya tenia hecho
+
+coord_todas<-subset(datregio_ambientales_KMEANS5_tsm,select=c(lon,lat))
+
+coordinates(coord_todas) <- c("lon", "lat")
+regiones_ambientales2<-raster::extract(biovar,coord_todas)
+
+coordenadas<-subset(datregio_ambientales_KMEANS5_tsm,select=c(lon,lat))
+regiones_ambientales3<-cbind(coordenadas,regiones_ambientales2,evapo=datregio_ambientales_KMEANS5_tsm$evapo,ph=datregio_ambientales_KMEANS5_tsm$ph,
+                             Regions=datregio_ambientales_KMEANS5_tsm$Regions)
+
+
+ggplot() +
+  borders("world", c("spain", "portugal","france","morocco"))+
+  geom_tile(data = regiones_ambientales3 , aes(x = regiones_ambientales3$lon,
+                                                      y = regiones_ambientales3$lat,
+                                                      width =0.05,
+                                                      height=0.05,
+                                                      fill=as.factor(Regions),
+                                                      color=as.factor(Regions), shape=as.factor(Regions)))+
+  scale_fill_manual(values = c("#D93535","#D2403F","#CB4A4A","#C35554",
+                               "#BC5F5E"))+
+  coord_equal()
+
+write.csv(regiones_ambientales3,file="C:/Users/joses/OneDrive/Documents/BD Aguilar/Trabajo/BBDD_General/REGIONALIZACION/Graficos/KMEANS_SC5_tsm_v2.csv")
+
+
+#**************************************************
+#MODELO INCLUYENDO mapping eigenvectors
+#**************************************************
+
+#lEEMOS EL FICHERO COMO CSV POR PROBLEMAS DE MEMORIA Y TENER LIMPIO ENVIORENMENT
+# library(readr)
+ datregio_ambientales <- read_csv(file="~/BD Aguilar/Trabajo/BBDD_General/REGIONALIZACION/MAPAS_REGIONALIZACION/data.csv")
+# View(datregio_ambientales)
+# 
+datregio_ambientales<-datregio_ambientales[,-1]
+
+datregio_ambientales<-cbind(datregio_ambientales[,1:23],PC1=datregio_ambientales[,"PC1"],PC2=datregio_ambientales[,"PC2"],PC3=datregio_ambientales[,"PC3"])
+
+KMEANS.PCO22<-kmeanspp(datregio_ambientales[,3:26],k=22) 
+
+#MODELO SELECCIONADO
+Regions=data.frame(Regions=as.factor(KMEANS.PCO22$cluster))
+datregio_ambientales_KMEANSPCO22<-cbind(datregio_ambientales,Regions=Regions)
+
+#GRAFICO RESULTADOS
+
+ggplot() +
+  borders("world", c("spain", "portugal","france","morocco"))+
+  geom_tile(data = datregio_ambientales_KMEANSPCO22 , aes(x = lon,
+                                                          y = lat,
+                                                          width =0.05,
+                                                          height=0.05,
+                                                          fill=Regions,
+                                                          color=Regions))+
+  scale_fill_discrete(name="Regions")+
+  coord_equal()
+
+
+ggplot() +
+  borders("world", c("spain", "portugal","france","morocco"))+
+  geom_tile(data = datregio_ambientales_KMEANSPCO22 %>% filter(Regions==14 | Regions==19) , aes(x = lon,
+                                                       y = lat,
+                                                       width =0.05,
+                                                       height=0.05,
+                                                       fill=Regions,
+                                                       color=Regions))+
+  scale_fill_discrete(name="Regions")+
+  coord_equal()
+
+
+ggplot() +
+  borders("world", c("spain", "portugal","france","morocco"))+
+  geom_tile(data = datregio_ambientales_KMEANS22_tsm %>% filter(Regions==14 | Regions==19) , aes(x = lon,
+                                                                                 y = lat,
+                                                                                 width =0.05,
+                                                                                 height=0.05,
+                                                                                 fill=Regions,
+                                                                                 color=Regions))+
+  scale_fill_discrete(name="Regions")+
+  coord_equal()
+
+#Ajustes manuales sobre las regiones obtenidas
+datregio_ambientales_KMEANSPCO22$Regions<-ifelse(datregio_ambientales_KMEANSPCO22$Regions==3 ,2,datregio_ambientales_KMEANSPCO22$Regions)
+datregio_ambientales_KMEANSPCO22$Regions<-ifelse(datregio_ambientales_KMEANSPCO22$Regions==4 ,18,datregio_ambientales_KMEANSPCO22$Regions)
+
+datregio_ambientales_KMEANSPCO22$Regions<-ifelse(datregio_ambientales_KMEANSPCO22$Regions==5 & datregio_ambientales_KMEANSPCO22$lat<=43 & datregio_ambientales_KMEANSPCO22$lat>41,2,datregio_ambientales_KMEANSPCO22$Regions)
+
+datregio_ambientales_KMEANSPCO22$Regions<-ifelse(datregio_ambientales_KMEANSPCO22$Regions==7 & datregio_ambientales_KMEANSPCO22$lat>36,1,datregio_ambientales_KMEANSPCO22$Regions)
+datregio_ambientales_KMEANSPCO22$Regions<-ifelse(datregio_ambientales_KMEANSPCO22$Regions==10 & datregio_ambientales_KMEANSPCO22$lat<36,7,datregio_ambientales_KMEANSPCO22$Regions)
+datregio_ambientales_KMEANSPCO22$Regions<-ifelse(datregio_ambientales_KMEANSPCO22$Regions==11 & datregio_ambientales_KMEANSPCO22$lat>36,10,datregio_ambientales_KMEANSPCO22$Regions)
+datregio_ambientales_KMEANSPCO22$Regions<-ifelse(datregio_ambientales_KMEANSPCO22$Regions==12 & datregio_ambientales_KMEANSPCO22$lat<42,10,datregio_ambientales_KMEANSPCO22$Regions)
+
+datregio_ambientales_KMEANSPCO22$Regions<-ifelse(datregio_ambientales_KMEANSPCO22$Regions==19 & datregio_ambientales_KMEANSPCO22$lon>3,18,datregio_ambientales_KMEANSPCO22$Regions)
+datregio_ambientales_KMEANSPCO22$Regions<-ifelse(datregio_ambientales_KMEANSPCO22$Regions==20,15,datregio_ambientales_KMEANSPCO22$Regions)
+
+datregio_ambientales_KMEANSPCO22$Regions<-as.factor(datregio_ambientales_KMEANSPCO22$Regions)
+
+
+write.csv(datregio_ambientales_KMEANSPCO22,file="C:/Users/joses/OneDrive/Documents/BD Aguilar/Trabajo/BBDD_General/REGIONALIZACION/MAPAS_REGIONALIZACION/KMEANS/contiguidad/PCO/KMEANS_22_pco_pond2.csv")
+
+
+#y si probamos con 5 con PCO? ####
+
+KMEANS.PCO5<-kmeanspp(datregio_ambientales[,3:26],k=5) 
+
+#MODELO SELECCIONADO
+
+Regions_5=data.frame(Regions=as.factor(KMEANS.PCO5$cluster))
+datregio_ambientales_KMEANSPCO_5<-cbind(datregio_ambientales,Regions=KMEANS.PCO5$cluster)
+
+#GRAFICO RESULTADOS
+
+ggplot() +
+  borders("world", c("spain", "portugal","france","morocco"))+
+  geom_tile(data = datregio_ambientales_KMEANSPCO_5 , aes(x = lon,
+                                                        y = lat,
+                                                        width =0.05,
+                                                        height=0.05,
+                                                        fill=as.factor(Regions),
+                                                        color=as.factor(Regions), shape=as.factor(Regions)))+
+  scale_fill_manual(values = c("#D93535","#D2403F","#CB4A4A","#C35554",
+                               "#BC5F5E","#B56A69","#AE7473","#A77F7D",
+                               "#A08A88","#989492","#919F9C","#8AA9A6",
+                               "#83B4B1","#7CBEBB","#74C9C5"))+
+  coord_equal()
+
+write.csv(datregio_ambientales_KMEANSPCO_5,file="C:/Users/joses/OneDrive/Documents/BD Aguilar/Trabajo/BBDD_General/REGIONALIZACION/MAPAS_REGIONALIZACION/KMEANS/contiguidad/PCO/KMEANS_5_pco_pond.csv")
+
+
+#*******************************************************************************************#
+## 3- PD CLUSTERING  sin contiguidad espacial ####
+#*******************************************************************************************#
+
+# FPDcluster #
+
+library(FPDclustering)
+
+
+#Me quedo solo con las variables a utilizar en la clasificacion
+
+muestra <- sample_frac(DF,0.022)
+datregio_ambientales <- muestra[,3:23]
+datregio_scale <- scale(datregio_ambientales)
+
+#Separamos en train y test
+
+set.seed(548)
+indice <- sample(2, nrow(datregio_ambientales), replace = TRUE, prob = c(0.7, 0.3))
+data_train <- datregio_scale[indice == 1, ]
+data_test <- datregio_scale[indice == 2, ]
+
+#Aplicando probabilidad de distancias (PD)
+pdn_train19=PDC(data_train,19) #19 grupos
+#JDF 0.2155237
+pdn_test19=PDC(data_test,19) #19 grupos
+#JDF 0.2158446
+
+#Aplicando probabilidad de distancias (PD) 5 grupos
+pdn_train5=PDC(data_train,5) #5 grupos
+#JDF 0.8196292
+pdn_test5=PDC(data_test,5) #5 grupos
+#JDF  0.8206209
+
+#Vemos como estan repartidos los clusters
+pdn_train$label %>% as.data.frame() %>% group_by(pdn_train$label)%>%count()
+pdn_test$label %>% as.data.frame() %>% group_by(pdn_test$label)%>%count()
+
+#Vemos como estan repartidos los 5 clusters
+pdn_train5$label %>% as.data.frame() %>% group_by(pdn_train5$label)%>%count()
+pdn_test5$label %>% as.data.frame() %>% group_by(pdn_test5$label)%>%count()
+
+#Aplicamos PD clustering a todo el conjunto de datos
+pdn22=PDC(datregio_scale,22) #22 grupos
+
+#Aplicamos PD clustering a todo el conjunto de datos con 5 grupos
+pdn5=PDC(datregio_scale,5) #5 grupos
+
+#Aplicamos PD clustering a todo el conjunto de datos con 3 grupos
+pdn3=PDC(datregio_scale,3) #3 grupos
+
+
+pdn22$label %>% as.data.frame() %>% group_by(pdn22$label)%>%count()
+pdn5$label %>% as.data.frame() %>% group_by(pdn5$label)%>%count()
+pdn3$label %>% as.data.frame() %>% group_by(pdn3$label)%>%count()
+
+
+pdn_label22<-data.frame(pdn22$label,pdn22$probability)
+pdn_centers22<-data.frame(pdn22$centers)
+#JDF = 0.2156022
+
+pdn_label5<-data.frame(pdn5$label,pdn5$probability)
+pdn_centers5<-data.frame(pdn5$centers)
+#JDF = 0.8198 complet dataset
+
+pdn_label3<-data.frame(pdn3$label,pdn3$probability)
+pdn_centers3<-data.frame(pdn3$centers)
+#JDF 1.370658
+
+colnames(pdn_label22)[colnames(pdn_label22)%in%c("pdn22.label")]<-c("Regions")
+colnames(pdn_label5)[colnames(pdn_label5)%in%c("pdn5.label")]<-c("Regions")
+colnames(pdn_label3)[colnames(pdn_label3)%in%c("pdn3.label")]<-c("Regions")
+
+#Grafico de resultados
+datregio_ambientales_PDC$Regions <-as.factor(datregio_ambientales_PDC$Regions)
+
+datregio_ambientales_PDC22<-cbind(muestra[,1:23],Regions=as.factor(pdn_label22$Regions))
+datregio_ambientales_PDC5<-cbind(muestra[,1:23],Regions=as.factor(pdn_label5$Regions))
+datregio_ambientales_PDC3<-cbind(muestra[,1:23],Regions=as.factor(pdn_label3$Regions))
+
+write.csv(datregio_ambientales_PDC5,file="C:/Users/joses/OneDrive/Documents/BD Aguilar/Trabajo/BBDD_General/REGIONALIZACION/Graficos/PDC_SC5.csv")
+write.csv(datregio_ambientales_PDC3,file="C:/Users/joses/OneDrive/Documents/BD Aguilar/Trabajo/BBDD_General/REGIONALIZACION/Graficos/PDC_SC3.csv")
+write.csv(datregio_ambientales_PDC22,file="C:/Users/joses/OneDrive/Documents/BD Aguilar/Trabajo/BBDD_General/REGIONALIZACION/Graficos/PDC_SC22.csv")
+
+ggplot() +
+  borders("world", c("spain", "portugal","france","morocco"))+
+  geom_tile(data = datregio_ambientales_PDC , aes(x = lon,
+                                                   y = lat,
+                                                   width =0.10,
+                                                   height=0.10,
+                                                   fill=Regions))+
+  scale_fill_discrete(name="Regions")+
+  coord_equal()
+
+ggplot() +
+  borders("world", c("spain", "portugal","france","morocco"))+
+  geom_tile(data = datregio_ambientales_PDC22 %>% filter(Regions==2)  , aes(x = lon,
+                                                   y = lat,
+                                                   width =0.10,
+                                                   height=0.10,
+                                                   fill=Regions))+
+  scale_fill_discrete(name="Regions")+
+  coord_equal()
+
+ggplot() +
+  borders("world", c("spain", "portugal","france","morocco"))+
+  geom_tile(data = datregio_ambientales_PDC22 %>% filter(Regions==3), aes(x = lon,
+                                                   y = lat,
+                                                   width =0.10,
+                                                   height=0.10,
+                                                   fill=Regions))+
+  scale_fill_discrete(name="Regions")+
+  coord_equal()
+
+
+## CONCLUSIONES: REAGRUPAMOS LOS RESULTADOS CON 5 CLUSTER EN 3 CLUSTER YA QUE HAY MUCHAS CELDAS CON MUY POCA DIFERENCIA ENTRE SUS PROBABILIDADES
+## PROBOCANDO CELDAS MUY CONTIGUAS CASI SUPERPUESTAS
+
+#Test de medias para muestras dependientes
+t.test(x = pdn_label22$X1, y = pdn_label22$X20, alternative = "two.sided", mu = 0, paired = TRUE, conf.level = 0.95)
+
+#Test de medias para muestras independientes
+t.test(x = pdn_label22$X3, y = pdn_label22$X5, alternative = "two.sided",mu= 0,var.equal= TRUE, conf.level= 0.95)
+i=4
+j=5
+
+ttest<-t.test(x = pdn_label22[,3], y = pdn_label22[,23], alternative = "two.sided",mu= 0,var.equal= TRUE, conf.level= 0.95)
+ttest1 <-rbind(ttest$p.value)
+
+for (i in 3:23){
+  for(j in 2:23){
+  ttest<-t.test(x = pdn_label22[,i], y = pdn_label22[,j], alternative = "two.sided",mu= 0,var.equal= TRUE, conf.level= 0.95)
+  ttest1 <-rbind(ttest1,ttest$p.value)
+}
+}
+
+write.csv(ttest1,file="./ttest22.csv")
+
+# Reagrupamos la regionalización de 19 regions a 5 regiones
+
+datregio_ambientales_PDC19_5<-datregio_ambientales_PDC19
+
+datregio_ambientales_PDC19_5$Regions<- ifelse(datregio_ambientales_PDC19_5$Regions==1,1,datregio_ambientales_PDC19_5$Regions)
+datregio_ambientales_PDC19_5$Regions<- ifelse(datregio_ambientales_PDC19_5$Regions==2,1,datregio_ambientales_PDC19_5$Regions)
+datregio_ambientales_PDC19_5$Regions<- ifelse(datregio_ambientales_PDC19_5$Regions==4,1,datregio_ambientales_PDC19_5$Regions)
+datregio_ambientales_PDC19_5$Regions<- ifelse(datregio_ambientales_PDC19_5$Regions==7,1,datregio_ambientales_PDC19_5$Regions)
+datregio_ambientales_PDC19_5$Regions<- ifelse(datregio_ambientales_PDC19_5$Regions==9,1,datregio_ambientales_PDC19_5$Regions)
+datregio_ambientales_PDC19_5$Regions<- ifelse(datregio_ambientales_PDC19_5$Regions==10,1,datregio_ambientales_PDC19_5$Regions)
+datregio_ambientales_PDC19_5$Regions<- ifelse(datregio_ambientales_PDC19_5$Regions==11,1,datregio_ambientales_PDC19_5$Regions)
+datregio_ambientales_PDC19_5$Regions<- ifelse(datregio_ambientales_PDC19_5$Regions==13,1,datregio_ambientales_PDC19_5$Regions)
+
+datregio_ambientales_PDC19_5$Regions<- ifelse(datregio_ambientales_PDC19_5$Regions==3,2,datregio_ambientales_PDC19_5$Regions)
+datregio_ambientales_PDC19_5$Regions<- ifelse(datregio_ambientales_PDC19_5$Regions==5,2,datregio_ambientales_PDC19_5$Regions)
+datregio_ambientales_PDC19_5$Regions<- ifelse(datregio_ambientales_PDC19_5$Regions==8,2,datregio_ambientales_PDC19_5$Regions)
+datregio_ambientales_PDC19_5$Regions<- ifelse(datregio_ambientales_PDC19_5$Regions==12,2,datregio_ambientales_PDC19_5$Regions)
+datregio_ambientales_PDC19_5$Regions<- ifelse(datregio_ambientales_PDC19_5$Regions==14,2,datregio_ambientales_PDC19_5$Regions)
+datregio_ambientales_PDC19_5$Regions<- ifelse(datregio_ambientales_PDC19_5$Regions==16,2,datregio_ambientales_PDC19_5$Regions)
+
+datregio_ambientales_PDC19_5$Regions<- ifelse(datregio_ambientales_PDC19_5$Regions==15,2,datregio_ambientales_PDC19_5$Regions)
+datregio_ambientales_PDC19_5$Regions<- ifelse(datregio_ambientales_PDC19_5$Regions==17,2,datregio_ambientales_PDC19_5$Regions)
+datregio_ambientales_PDC19_5$Regions<- ifelse(datregio_ambientales_PDC19_5$Regions==18,2,datregio_ambientales_PDC19_5$Regions)
+
+datregio_ambientales_PDC19_5$Regions<- ifelse(datregio_ambientales_PDC19_5$Regions==6,3,datregio_ambientales_PDC19_5$Regions)
+datregio_ambientales_PDC19_5$Regions<- ifelse(datregio_ambientales_PDC19_5$Regions==19,4,datregio_ambientales_PDC19_5$Regions)
+
+datregio_ambientales_PDC19_5$Region<-as.factor(datregio_ambientales_PDC19_5$Region)
+
+write.csv(datregio_ambientales_PDC19_5,file="C:/Users/joses/OneDrive/Documents/BD Aguilar/Trabajo/BBDD_General/REGIONALIZACION/Graficos/PDC_SC19_5.csv")
+
+
+ggplot() +
+  borders("world", c("spain", "portugal","france","morocco"))+
+  geom_tile(data = datregio_ambientales_PDC19_5 , aes(x = lon,
+                                                 y = lat,
+                                                 width =0.10,
+                                                 height=0.10,
+                                                 fill=as.factor(Regions)))+
+  scale_fill_discrete(name="Regions")+
+  coord_equal()
+
+
+#*******************************************************************************************#
+## 4- PD CLUSTERING  con contiguidad espacial ####
+#*******************************************************************************************#
+
+# muestra <- sample_frac(DF,0.019)
+# datregio_ambientales <- muestra[,3:23]
+# # datregio_ambientales <- datregio_ambientales %>% mutate(poli3=lat + lon + lat2 + latlon + 
+# # lon2 + lat3 + lat2lon + latlon2 + lon3)
+
+# Tiro de data que ya he creado los PC ponderados directamente de datregio_ambientales =  muestra de una version anterior
+datregio_ambientales<-data[,-c(36,35,34,33,32,30,29,28,27,26,25,24)]
+
+datregio_ambientales<-cbind(datregio_ambientales[,1:23],poli3=datregio_ambientales[,"poli3"],PC1=datregio_ambientales$PC1,PC2=datregio_ambientales$PC2,PC3=datregio_ambientales$PC3)
+muestra_pdc <- sample_frac(datregio_ambientales,0.050)
+
+datregio_scale <- scale(muestra_pdc)
+
+#**************************************************
+#MODELO INCLUYENDO TSM ####
+#**************************************************
+
+#Separamos en train y test
+
+set.seed(548)
+indice <- sample(2, nrow(datregio_ambientales), replace = TRUE, prob = c(0.7, 0.3))
+data_train <- datregio_scale[indice == 1, ]
+data_test <- datregio_scale[indice == 2, ]
+
+#Aplicando probabilidad de distancias (PD)
+pdn_train=PDC(data_train,15) #15 grupos
+
+pdn_test=PDC(data_test,15) #15 grupos
+
+#Vemos como estan repartidos los clusters
+pdn_train$label %>% as.data.frame() %>% group_by(pdn_train$label)%>%count()
+pdn_test$label %>% as.data.frame() %>% group_by(pdn_test$label)%>%count()
+
+#Aplicamos PD clustering a todo el conjunto de datos
+pdn_cc5=PDC(datregio_scale,5) # 5 grupos
+pdn_cc22=PDC(datregio_scale,22) # 22 grupos
+#JDF19 0.23028  JDF5 0.8754 JDF22 0.1989
+
+# k=5
+pdn_cc5$label %>% as.data.frame() %>% group_by(pdn_cc5$label)%>%count()
+
+pdn_cc5_label<-data.frame(pdn_cc5$label,pdn_cc5$probability)
+pdn_cc5_centers<-data.frame(pdn_cc5$centers)
+#JDF = 0.273
+
+colnames(pdn_cc5_label)[colnames(pdn_cc5_label)%in%c("pdn_cc5.label")]<-c("Regions")
+
+# K=22
+pdn_cc22$label %>% as.data.frame() %>% group_by(pdn_cc22$label)%>%count()
+
+pdn_cc22_label<-data.frame(pdn_cc22$label,pdn_cc22$probability)
+pdn_cc22_centers<-data.frame(pdn_cc22$centers)
+#JDF = 0.19913
+
+colnames(pdn_cc22_label)[colnames(pdn_cc22_label)%in%c("pdn_cc22.label")]<-c("Regions")
+
+#Grafico de resultados
+
+datregio_ambientales_PDC_cc5 <-cbind(muestra[,1:24],Regions=as.factor(pdn_cc5_label$Regions))
+datregio_ambientales_PDC_cc22<-cbind(muestra[,1:24],Regions=as.factor(pdn_cc22_label$Regions))
+
+
+ggplot() +
+  borders("world", c("spain", "portugal","france","morocco"))+
+  geom_tile(data = datregio_ambientales_PDC_cc5 %>% filter(Regions==3) , aes(x = lon,
+                                                      y = lat,
+                                                      width =0.10,
+                                                      height=0.10,
+                                                      fill=Regions))+
+  scale_fill_discrete(name="Regions")+
+  coord_equal()
+
+write.csv(datregio_ambientales_PDC_cc5,file="C:/Users/joses/OneDrive/Documents/BD Aguilar/Trabajo/BBDD_General/REGIONALIZACION/Graficos/PDC_PCO5.csv")
+write.csv(datregio_ambientales_PDC_cc22,file="C:/Users/joses/OneDrive/Documents/BD Aguilar/Trabajo/BBDD_General/REGIONALIZACION/Graficos/PDC_cc22.csv")
+
+
+## CONCLUSIONES: REAGRUPAMOS LOS RESULTADOS CON 5 CLUSTER EN 3 CLUSTER YA QUE HAY MUCHAS CELDAS CON MUY POCA DIFERENCIA ENTRE SUS PROBABILIDADES
+## PROBOCANDO CELDAS MUY CONTIGUAS CASI SUPERPUESTAS
+
+#Test de medias para muestras dependientes
+t.test(x = pdn_cc5_label$X1, y = pdn_cc5_label$X2, alternative = "two.sided", mu = 0, paired = TRUE, conf.level = 0.95)
+
+#Test de medias para muestras independientes
+t.test(x = pdn_cc5_label$X1, y = pdn_cc5_label$X3, alternative = "two.sided",mu= 0,var.equal= TRUE, conf.level= 0.95)
+
+
+#Test de medias para muestras dependientes
+t.test(x = pdn_cc22_label$X1, y = pdn_cc22_label$X2, alternative = "two.sided", mu = 0, paired = TRUE, conf.level = 0.95)
+
+#Test de medias para muestras independientes
+t.test(x = pdn_cc22_label$X1, y = pdn_cc22_label$X5, alternative = "two.sided",mu= 0,var.equal= TRUE, conf.level= 0.95)
+
+ttest<-t.test(x = pdn_cc5_label[,2], y = pdn_cc5_label[,2], alternative = "two.sided",mu= 0,var.equal= TRUE, conf.level= 0.95)
+ttest1 <-rbind(ttest$p.value)
+
+for (i in 2:6){
+  for(j in 2:6){
+    ttest<-t.test(x = pdn_cc5_label[,i], y = pdn_cc5_label[,j], alternative = "two.sided",mu= 0,var.equal= TRUE, conf.level= 0.95)
+    ttest1 <-rbind(ttest1,ttest$p.value)
+  }
+}
+
+write.csv(ttest1,file="./ttest_TSA5.csv")
+
+
+
+# Viendo los resultados se reagrupan las regiones, en el caso de k=5 pasamos a k=3 ####
+
+
+PDC.TSA_3<-PDC(datregio_scale,3) # Toda observacion como noise
+#JDF = 1.4635
+
+# k=3
+PDC.TSA_3$label %>% as.data.frame() %>% group_by(PDC.TSA_3$label)%>%count()
+
+pdn_cc3_label<-data.frame(PDC.TSA_3$label,PDC.TSA_3$probability)
+pdn_cc3_centers<-data.frame(PDC.TSA_3$centers)
+
+colnames(pdn_cc3_label)[colnames(pdn_cc3_label)%in%c("PDC.TSA_3.label")]<-c("Regions")
+
+datregio_ambientales_PDCTSA3<-cbind(datregio_scale,Regions=as.factor(pdc_cclabel3$Regions)) %>% data.frame()
+datregio_ambientales_PDCTSA3$Regions<-as.factor(datregio_ambientales_PDCTSA3$Regions)
+
+datregio_ambientales_PDCTSA3 <-cbind(muestra[,1:24],Regions=as.factor(pdn_cc3_label$Regions))
+
+#GRAFICO RESULTADOS
+ggplot() +
+  borders("world", c("spain", "portugal","france","morocco"))+
+  geom_tile(data = datregio_ambientales_PDCTSA3, aes(x = lon,
+                                                       y = lat,
+                                                       width =0.10,
+                                                       height=0.10,
+                                                       fill=Regions))+
+  scale_fill_discrete(name="Regions")+
+  coord_equal()
+
+write.csv(datregio_ambientales_PDCTSA3,file="C:/Users/joses/OneDrive/Documents/BD Aguilar/Trabajo/BBDD_General/REGIONALIZACION/Graficos/PDC_TSA5_3.csv")
+
+
+# Viendo los resultados se reagrupan las regiones, en el caso de k=22 pasamos a k=4 ####
+
+datregio_ambientales_PDC19_4<-datregio_ambientales_PDC_cc19
+
+datregio_ambientales_PDC19_4$Regions<- ifelse(datregio_ambientales_PDC19_4$Regions==1,1,datregio_ambientales_PDC19_4$Regions)
+datregio_ambientales_PDC19_4$Regions<- ifelse(datregio_ambientales_PDC19_4$Regions==4,1,datregio_ambientales_PDC19_4$Regions)
+datregio_ambientales_PDC19_4$Regions<- ifelse(datregio_ambientales_PDC19_4$Regions==5,1,datregio_ambientales_PDC19_4$Regions)
+datregio_ambientales_PDC19_4$Regions<- ifelse(datregio_ambientales_PDC19_4$Regions==6,1,datregio_ambientales_PDC19_4$Regions)
+datregio_ambientales_PDC19_4$Regions<- ifelse(datregio_ambientales_PDC19_4$Regions==8,1,datregio_ambientales_PDC19_4$Regions)
+datregio_ambientales_PDC19_4$Regions<- ifelse(datregio_ambientales_PDC19_4$Regions==13,1,datregio_ambientales_PDC19_4$Regions)
+datregio_ambientales_PDC19_4$Regions<- ifelse(datregio_ambientales_PDC19_4$Regions==14,1,datregio_ambientales_PDC19_4$Regions)
+datregio_ambientales_PDC19_4$Regions<- ifelse(datregio_ambientales_PDC19_4$Regions==19,1,datregio_ambientales_PDC19_4$Regions)
+
+datregio_ambientales_PDC19_4$Regions<- ifelse(datregio_ambientales_PDC19_4$Regions==2,2,datregio_ambientales_PDC19_4$Regions)
+datregio_ambientales_PDC19_4$Regions<- ifelse(datregio_ambientales_PDC19_4$Regions==3,2,datregio_ambientales_PDC19_4$Regions)
+datregio_ambientales_PDC19_4$Regions<- ifelse(datregio_ambientales_PDC19_4$Regions==7,2,datregio_ambientales_PDC19_4$Regions)
+datregio_ambientales_PDC19_4$Regions<- ifelse(datregio_ambientales_PDC19_4$Regions==9,2,datregio_ambientales_PDC19_4$Regions)
+datregio_ambientales_PDC19_4$Regions<- ifelse(datregio_ambientales_PDC19_4$Regions==11,2,datregio_ambientales_PDC19_4$Regions)
+datregio_ambientales_PDC19_4$Regions<- ifelse(datregio_ambientales_PDC19_4$Regions==12,2,datregio_ambientales_PDC19_4$Regions)
+datregio_ambientales_PDC19_4$Regions<- ifelse(datregio_ambientales_PDC19_4$Regions==15,2,datregio_ambientales_PDC19_4$Regions)
+datregio_ambientales_PDC19_4$Regions<- ifelse(datregio_ambientales_PDC19_4$Regions==16,2,datregio_ambientales_PDC19_4$Regions)
+
+datregio_ambientales_PDC19_4$Regions<- ifelse(datregio_ambientales_PDC19_4$Regions==17,3,datregio_ambientales_PDC19_4$Regions)
+datregio_ambientales_PDC19_4$Regions<- ifelse(datregio_ambientales_PDC19_4$Regions==18,3,datregio_ambientales_PDC19_4$Regions)
+
+datregio_ambientales_PDC19_4$Regions<- ifelse(datregio_ambientales_PDC19_4$Regions==10,4,datregio_ambientales_PDC19_4$Regions)
+
+datregio_ambientales_PDC19_4$Region<-as.factor(datregio_ambientales_PDC19_4$Region)
+
+#GRAFICO RESULTADOS
+ggplot() +
+  borders("world", c("spain", "portugal","france","morocco"))+
+  geom_tile(data = datregio_ambientales_PDC19_4, aes(x = lon,
+                                                     y = lat,
+                                                     width =0.13,
+                                                     height=0.13,
+                                                     fill=as.factor(Regions)))+
+  scale_fill_discrete(name="Regions")+
+  coord_equal()
+
+
+write.csv(datregio_ambientales_PDC19_4,file="C:/Users/joses/OneDrive/Documents/BD Aguilar/Trabajo/BBDD_General/REGIONALIZACION/Graficos/PDC_PCO19_4.csv")
+
+
+#**************************************************
+### MODELO INCLUYENDO EINGENVECTOR MAPPING ####
+#**************************************************
+
+datregio_ambientales <-data
+#muestra_sample<-sample_frac(data,size=0.025)
+
+# df_PDC1<-cbind(datregio_ambientales[1:50000,1:23],PC1=datregio_ambientales[1:50000,"PC1"],PC2=datregio_ambientales[1:50000,"PC2"],PC3=datregio_ambientales[1:50000,"PC3"])
+# df_PDC2<-cbind(datregio_ambientales[50001:100000,1:23],PC1=datregio_ambientales[50001:100000,"PC1"],PC2=datregio_ambientales[50001:100000,"PC2"],PC3=datregio_ambientales[50001:100000,"PC3"])
+# df_PDC3<-cbind(datregio_ambientales[100001:150000,1:23],PC1=datregio_ambientales[100001:150000,"PC1"],PC2=datregio_ambientales[100001:150000,"PC2"],PC3=datregio_ambientales[100001:150000,"PC3"])
+# df_PDC4<-cbind(datregio_ambientales[150001:200000,1:23],PC1=datregio_ambientales[150001:200000,"PC1"],PC2=datregio_ambientales[150001:200000,"PC2"],PC3=datregio_ambientales[150001:200000,"PC3"])
+# 
+# df_PDC5<-cbind(datregio_ambientales[200001:250000,1:23],PC1=datregio_ambientales[200001:250000,"PC1"],PC2=datregio_ambientales[200001:250000,"PC2"],PC3=datregio_ambientales[200001:250000,"PC3"])
+# df_PDC6<-cbind(datregio_ambientales[250001:300000,1:23],PC1=datregio_ambientales[250001:300000,"PC1"],PC2=datregio_ambientales[250001:300000,"PC2"],PC3=datregio_ambientales[250001:300000,"PC3"])
+# df_PDC7<-cbind(datregio_ambientales[300001:350000,1:23],PC1=datregio_ambientales[300001:350000,"PC1"],PC2=datregio_ambientales[300001:350000,"PC2"],PC3=datregio_ambientales[300001:350000,"PC3"])
+# df_PDC8<-cbind(datregio_ambientales[350001:400000,1:23],PC1=datregio_ambientales[350001:400000,"PC1"],PC2=datregio_ambientales[350001:400000,"PC2"],PC3=datregio_ambientales[350001:400000,"PC3"])
+
+df_PDC_experimental<-cbind(datregio_ambientales[,1:23],PC1=datregio_ambientales[,"PC1"],PC2=datregio_ambientales[,"PC2"],PC3=datregio_ambientales[,"PC3"])
+
+
+# PARA K=5
+
+PDC.PCO5_expe<-PDC(df_PDC_experimental[,3:26],5)
+
+pco_label5_exp<-data.frame(PDC.PCO5_expe$label,PDC.PCO5_expe$probability)
+pco_centers5_exp<-data.frame(PDC.PCO5_expe$centers)
+colnames(pco_label5_exp)[colnames(pco_label5_exp)%in%c("PDC.PCO5_expe.label")]<-c("Regions")
+
+datregio_ambientales_PDCPCO5_exp<-cbind(df_PDC_experimental,Regions=as.factor(pco_label5_exp$Regions))
+
+ggplot() +
+  borders("world", c("spain", "portugal","france","morocco"))+
+  geom_tile(data = datregio_ambientales_PDCPCO_DEF_5 , aes(x = lon,
+                                                             y = lat,
+                                                             width =0.09,
+                                                             height=0.09,
+                                                             fill=Regions))+
+  scale_fill_discrete(name="Regions")+  coord_equal()
+
+write.csv(datregio_ambientales_PDCPCO5_exp,file="C:/Users/joses/OneDrive/Documents/BD Aguilar/Trabajo/BBDD_General/REGIONALIZACION/MAPAS_REGIONALIZACION/PDC/contiguidad/PCO/PDC_PCO5_pond.csv")
+
+
+# PDC.PCO<-PDC(df_PDC1[,3:26],5) # Toda observacion como noise
+# PDC.PCO2<-PDC(df_PDC2[,3:26],5) # Toda observacion como noise
+# PDC.PCO3<-PDC(df_PDC3[,3:26],5) # Toda observacion como noise
+# PDC.PCO4<-PDC(df_PDC4[,3:26],5) # Toda observacion como noise
+# 
+# #JDF=188.4591 de 1 con 5 grupos
+# #JDF=191.2572 de 2 con 5 grupos
+# #JDF=193.9049 de 3 con 5 grupos
+# #JDF=190.5655 de 4 con 5 grupos
+# 
+# # PARA K=22 
+# PDC.PCO22_1<-PDC(df_PDC1[,3:26],22) # Toda observacion como noise
+# PDC.PCO22_2<-PDC(df_PDC2[,3:26],22) # Toda observacion como noise
+# PDC.PCO22_3<-PDC(df_PDC3[,3:26],22) # Toda observacion como noise
+# PDC.PCO22_4<-PDC(df_PDC4[,3:26],22) # Toda observacion como noise
+# 
+# PDC.PCO5<-PDC(df_PDC5[,3:26],22) # Toda observacion como noise
+# PDC.PCO6<-PDC(df_PDC6[,3:26],22) # Toda observacion como noise
+# PDC.PCO7<-PDC(df_PDC7[,3:26],22) # Toda observacion como noise
+# PDC.PCO8<-PDC(df_PDC8[,3:26],22) # Toda observacion como noise
+
+PDC.PCO22_expe<-PDC(df_PDC_experimental[,3:26],22)
+
+#JDF=43.24533
+# 
+# # PARA K=8 
+# PDC.PCO8<-PDC(df_PDC1[,3:26],8) # Toda observacion como noise
+# PDC.PCO28<-PDC(df_PDC2[,3:26],8) # Toda observacion como noise
+# #JDF= de 1 con 8 grupos
+# #JDF= de 2 con 8 grupos
+# 
+# #con 5 grupos
+# pco_label<-data.frame(PDC.PCO$label,PDC.PCO$probability)
+# pco_centers<-data.frame(PDC.PCO$centers)
+# 
+# pco_label2<-data.frame(PDC.PCO2$label,PDC.PCO2$probability)
+# pco_centers2<-data.frame(PDC.PCO2$centers)
+# 
+# pco_label3<-data.frame(PDC.PCO3$label,PDC.PCO3$probability)
+# pco_centers3<-data.frame(PDC.PCO3$centers)
+# 
+# pco_label4<-data.frame(PDC.PCO4$label,PDC.PCO4$probability)
+# pco_centers4<-data.frame(PDC.PCO4$centers)
+# 
+# colnames(pco_label)[colnames(pco_label)%in%c("PDC.PCO.label")]<-c("Regions")
+# colnames(pco_label2)[colnames(pco_label2)%in%c("PDC.PCO2.label")]<-c("Regions")
+# colnames(pco_label3)[colnames(pco_label3)%in%c("PDC.PCO3.label")]<-c("Regions")
+# colnames(pco_label4)[colnames(pco_label4)%in%c("PDC.PCO4.label")]<-c("Regions")
+# 
+# pco_label_df5 <-rbind(pco_label,pco_label2,pco_label3,pco_label4)
+# 
+# #con 22 grupos
+
+
+pco_label22_exp<-data.frame(PDC.PCO22_expe$label,PDC.PCO22_expe$probability)
+pco_centers22_exp<-data.frame(PDC.PCO22_expe$centers)
+colnames(pco_label22_exp)[colnames(pco_label22_exp)%in%c("PDC.PCO22_expe.label")]<-c("Regions")
+
+# df_PDC_exp<-cbind(datregio_ambientales[1:50000,1:23],PC1=datregio_ambientales[1:50000,"PC1"],PC2=datregio_ambientales[1:50000,"PC2"],PC3=datregio_ambientales[1:50000,"PC3"])
+
+datregio_ambientales_PDCPCO22_exp<-cbind(df_PDC_experimental,Regions=as.factor(pco_label22_exp$Regions))
+
+
+# pco_label22_1<-data.frame(PDC.PCO22_1$label,PDC.PCO22_1$probability)
+# pco_centers22_1<-data.frame(PDC.PCO22_1$centers)
+# 
+# pco_label22_2<-data.frame(PDC.PCO22_2$label,PDC.PCO22_2$probability)
+# pco_centers22_2<-data.frame(PDC.PCO22_2$centers)
+# 
+# pco_label22_3<-data.frame(PDC.PCO22_3$label,PDC.PCO22_3$probability)
+# pco_centers22_3<-data.frame(PDC.PCO22_3$centers)
+# 
+# pco_label22_4<-data.frame(PDC.PCO22_4$label,PDC.PCO22_4$probability)
+# pco_centers22_4<-data.frame(PDC.PCO22_4$centers)
+# 
+# pco_label22_5<-data.frame(PDC.PCO5$label,PDC.PCO5$probability)
+# pco_centers22_5<-data.frame(PDC.PCO5$centers)
+# 
+# pco_label22_6<-data.frame(PDC.PCO6$label,PDC.PCO6$probability)
+# pco_centers22_6<-data.frame(PDC.PCO6$centers)
+# 
+# pco_label22_7<-data.frame(PDC.PCO7$label,PDC.PCO7$probability)
+# pco_centers22_7<-data.frame(PDC.PCO7$centers)
+# 
+# pco_label22_8<-data.frame(PDC.PCO8$label,PDC.PCO8$probability)
+# pco_centers22_8<-data.frame(PDC.PCO8$centers)
+# 
+# colnames(pco_label22_1)[colnames(pco_label22_1)%in%c("PDC.PCO22_1.label")]<-c("Regions")
+# colnames(pco_label22_2)[colnames(pco_label22_2)%in%c("PDC.PCO22_2.label")]<-c("Regions")
+# colnames(pco_label22_3)[colnames(pco_label22_3)%in%c("PDC.PCO22_3.label")]<-c("Regions")
+# colnames(pco_label22_4)[colnames(pco_label22_4)%in%c("PDC.PCO22_4.label")]<-c("Regions")
+# colnames(pco_label22_5)[colnames(pco_label22_5)%in%c("PDC.PCO5.label")]<-c("Regions")
+# colnames(pco_label22_6)[colnames(pco_label22_6)%in%c("PDC.PCO6.label")]<-c("Regions")
+# colnames(pco_label22_7)[colnames(pco_label22_7)%in%c("PDC.PCO7.label")]<-c("Regions")
+# colnames(pco_label22_8)[colnames(pco_label22_8)%in%c("PDC.PCO8.label")]<-c("Regions")
+# 
+# pco_label_df22 <-rbind(pco_label22_1,pco_label22_2,pco_label22_3,pco_label22_4,pco_label22_5,pco_label22_6,pco_label22_7,pco_label22_8)
+# 
+# #con 8 grupos
+# pco_label8<-data.frame(PDC.PCO8$label,PDC.PCO8$probability)
+# pco_centers8<-data.frame(PDC.PCO8$centers)
+# 
+# pco_label28<-data.frame(PDC.PCO28$label,PDC.PCO28$probability)
+# pco_centers28<-data.frame(PDC.PCO28$centers)
+# 
+# colnames(pco_label8)[colnames(pco_label8)%in%c("PDC.PCO8.label")]<-c("Regions")
+# colnames(pco_label28)[colnames(pco_label28)%in%c("PDC.PCO28.label")]<-c("Regions")
+# 
+# #MODELO SELECCIONADO
+# 
+# datregio_ambientales_PDCPCO<-cbind(df_PDC1,Regions=as.factor(pco_label$Regions))
+# datregio_ambientales_PDCPCO2<-cbind(df_PDC2,Regions=as.factor(pco_label2$Regions))
+# datregio_ambientales_PDCPCO3<-cbind(df_PDC3,Regions=as.factor(pco_label3$Regions))
+# datregio_ambientales_PDCPCO4<-cbind(df_PDC4,Regions=as.factor(pco_label4$Regions))
+# 
+# datregio_ambientales_PDCPCO_DEF_5 <-rbind(datregio_ambientales_PDCPCO,datregio_ambientales_PDCPCO2,datregio_ambientales_PDCPCO3,datregio_ambientales_PDCPCO4)
+# 
+# rm(datregio_ambientales_PDCPCO,datregio_ambientales_PDCPCO2,datregio_ambientales_PDCPCO3,datregio_ambientales_PDCPCO4)
+# 
+# #Con 22 grupos
+# datregio_ambientales_PDCPCO22_1<-cbind(df_PDC1,Regions=as.factor(pco_label22_1$Regions))
+# datregio_ambientales_PDCPCO22_2<-cbind(df_PDC2,Regions=as.factor(pco_label22_2$Regions))
+# datregio_ambientales_PDCPCO22_3<-cbind(df_PDC3,Regions=as.factor(pco_label22_3$Regions))
+# datregio_ambientales_PDCPCO22_4<-cbind(df_PDC4,Regions=as.factor(pco_label22_4$Regions))
+# datregio_ambientales_PDCPCO22_5<-cbind(df_PDC5,Regions=as.factor(pco_label22_5$Regions))
+# datregio_ambientales_PDCPCO22_6<-cbind(df_PDC6,Regions=as.factor(pco_label22_6$Regions))
+# datregio_ambientales_PDCPCO22_7<-cbind(df_PDC7,Regions=as.factor(pco_label22_7$Regions))
+# datregio_ambientales_PDCPCO22_8<-cbind(df_PDC8,Regions=as.factor(pco_label22_8$Regions))
+# 
+# datregio_ambientales_PDCPCO_DEF_22 <-rbind(datregio_ambientales_PDCPCO22_1,datregio_ambientales_PDCPCO22_2,datregio_ambientales_PDCPCO22_3,datregio_ambientales_PDCPCO22_4,
+#                                            datregio_ambientales_PDCPCO22_5,datregio_ambientales_PDCPCO22_6,datregio_ambientales_PDCPCO22_7,datregio_ambientales_PDCPCO22_8)
+# 
+# rm(datregio_ambientales_PDCPCO22_1,datregio_ambientales_PDCPCO22_2,datregio_ambientales_PDCPCO22_3,datregio_ambientales_PDCPCO22_4,
+#    datregio_ambientales_PDCPCO22_5,datregio_ambientales_PDCPCO22_6,datregio_ambientales_PDCPCO22_7,datregio_ambientales_PDCPCO22_8)
+# 
+# #Con 8 grupos
+# datregio_ambientales_PDCPCO8<-cbind(df_PDC1,Regions=as.factor(pco_label8$Regions))
+# 
+# datregio_ambientales_PDCPCO28<-cbind(df_PDC2,Regions=as.factor(pco_label28$Regions))
+# 
+# datregio_ambientales_PDCPCO_DEF_8 <-rbind(datregio_ambientales_PDCPCO8,datregio_ambientales_PDCPCO28)
+# 
+
+# Viendo los resultados se reagrupan las regiones, en el caso de k=22 pasamos a k=19 ####
+
+#La region 10 y 20 son muy similares por eso se unifican
+#La region 10 y 17 son muy similares por eso se unifican
+#La region 9 y 21 son muy similares por eso se unifican
+datregio_ambientales_PDCPCO22_exp_2<-datregio_ambientales_PDCPCO22_exp
+
+datregio_ambientales_PDCPCO22_exp_2$Regions<- ifelse(datregio_ambientales_PDCPCO22_exp_2$Regions==21,9,datregio_ambientales_PDCPCO22_exp_2$Regions)
+datregio_ambientales_PDCPCO22_exp_2$Regions<- ifelse(datregio_ambientales_PDCPCO22_exp_2$Regions==17,10,datregio_ambientales_PDCPCO22_exp_2$Regions)
+datregio_ambientales_PDCPCO22_exp_2$Regions<- ifelse(datregio_ambientales_PDCPCO22_exp_2$Regions==20,10,datregio_ambientales_PDCPCO22_exp_2$Regions)
+
+
+
+datregio_ambientales_PDCPCO22_exp_2$Regions<- ifelse(datregio_ambientales_PDCPCO22_exp_2$Regions==18,17,datregio_ambientales_PDCPCO22_exp_2$Regions)
+datregio_ambientales_PDCPCO22_exp_2$Regions<- ifelse(datregio_ambientales_PDCPCO22_exp_2$Regions==19,18,datregio_ambientales_PDCPCO22_exp_2$Regions)
+datregio_ambientales_PDCPCO22_exp_2$Regions<- ifelse(datregio_ambientales_PDCPCO22_exp_2$Regions==22,19,datregio_ambientales_PDCPCO22_exp_2$Regions)
+
+
+datregio_ambientales_PDCPCO22_exp_2$Regions<-as.factor(datregio_ambientales_PDCPCO22_exp_2$Regions)
+
+
+ggplot() +
+  borders("world", c("spain", "portugal","france","morocco"))+
+  geom_tile(data = datregio_ambientales_PDCPCO22_exp_2 , aes(x = lon,
+                                                             y = lat,
+                                                             width =0.09,
+                                                             height=0.09,
+                                                             fill=Regions))+
+  scale_fill_discrete(name="Regions")+  coord_equal()
+
+write.csv(datregio_ambientales_PDCPCO22_exp_2,file="C:/Users/joses/OneDrive/Documents/BD Aguilar/Trabajo/BBDD_General/REGIONALIZACION/MAPAS_REGIONALIZACION/PDC/contiguidad/PCO/PDC_PCO19.csv")
+
+#Test de student para comparar probabilidades medias de pertenecer una observación a una región u otra
+
+ttest<-t.test(x = pco_label_df5[,2], y = pco_label_df5[,2], alternative = "two.sided",mu= 0,var.equal= TRUE, conf.level= 0.95)
+ttest1 <-rbind(ttest$p.value)
+
+for (i in 2:6){
+  for(j in 2:6){
+    ttest<-t.test(x = pco_label_df5[,i], y = pco_label_df5[,j], alternative = "two.sided",mu= 0,var.equal= TRUE, conf.level= 0.95)
+    ttest1 <-rbind(ttest1,ttest$p.value)
+  }
+}
+
+write.csv(ttest1,file="./ttest_PCOA5.csv")
+
