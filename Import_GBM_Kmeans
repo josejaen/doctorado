@@ -1,0 +1,161 @@
+
+#*********************************************************#
+### GRADIENT BOOSTING TO MEASURE IMPORTANCE VARIABLES ####
+#*********************************************************#
+
+library(gbm)
+library(dplyr)
+
+
+#### KMEANS with contiguity TSM ####
+
+nombre<-"cluster"
+cluster_kmeans<- datregio_ambientales_KMEANS5_tsm$Regions
+data<-datregio_ambientales_KMEANS5_tsm[,3:24]
+data<-sample_frac(data,size=0.20)
+
+
+#Set train 70% y test 30%
+
+pc_train = floor(0.70*nrow(data)) 
+
+train_ind <- sample(seq_len(nrow(data)),size = pc_train)
+data_train <-data[train_ind,]
+data_test<-data[-train_ind,] 
+
+#Hiperparametres Grid
+
+hiperparametros <- expand.grid(
+  shrinkage = c(0.01,0.5),
+  interaction.depth = c(3, 5),
+  n.minobsinnode = c(5, 15),
+  bag.fraction = c(0.8, 1),
+  optimal_trees = 0,               # a place to dump results
+  min_RMSE = 0,                    # a place to dump results
+  min_cor = 0,
+  cv.folds=5
+)
+
+nrow(hiperparametros) # total of combinations
+
+# random sample of train
+random_index <- sample(1:nrow(data_train), nrow(data_train))
+random_train <- data_train[random_index, ]%>%data.frame()
+random_train$Regions <-as.numeric(random_train$Regions)
+
+for(i in 1:nrow(hiperparametros)) {
+  set.seed(123)
+  print(i)
+  gbm.tune <- gbm(
+    formula = Regions ~ .,
+    distribution = "gaussian",
+    data = random_train,
+    n.trees = 15,
+    cv.folds=5,
+    interaction.depth = hiperparametros$interaction.depth[i],
+    shrinkage = hiperparametros$shrinkage[i],
+    n.minobsinnode = hiperparametros$n.minobsinnode[i],
+    bag.fraction = hiperparametros$bag.fraction[i],
+    train.fraction = 0.75,
+    n.cores = NULL, # will use all cores by default
+    verbose = FALSE
+  )
+  
+  hiperparametros$optimal_trees[i] <- which.min(gbm.tune$valid.error)
+  hiperparametros$min_RMSE[i] <- sqrt(min(gbm.tune$valid.error))
+  hiperparametros$min_cor[i] <- cor(random_train$Regions, predict(gbm.tune))
+}
+
+hiperparametros %>% 
+  dplyr::arrange(min_RMSE) %>%
+  head(10)
+  
+#best results
+
+#shrinkage interaction.depth n.minobsinnode bag.fraction optimal_trees  min_RMSE   min_cor     cv.folds
+#  0.50                 5              5          1.0            15     0.366145    0.9691       5
+
+data_train <- data.frame(data_train)
+cluster_kmeans<- data$Regions
+cluster_kmeans <-as.data.frame(cluster_kmeans)
+
+set.seed(123)
+model_gbm_kmeans <- gbm(Regions ~.,data=data_train, 
+                        distribution = "gaussian",
+                        n.trees = 15,
+                        interaction.depth = 5,
+                        shrinkage = 0.5,
+                        n.minobsinnode = 5,
+                        bag.fraction = 1.0, 
+                        train.fraction = 0.75,
+                        verbose = FALSE,
+                        cv.folds = 5
+) 
+#RMSE (root mean square error)
+sqrt(min(model_gbm_kmeans$cv.error))
+#0.3742
+sqrt(min(model_gbm_kmeans$train.error))
+#0.3666
+#Correlation between the predict and train set
+
+train_predict <- predict(model_gbm_kmeans)
+cor(as.numeric(data_train$Regions), train_predict)
+# 0.9687
+#Correlation between the predict and test set
+data_test <- data.frame(data_test)
+
+test_predict <- predict(model_gbm_kmeans,data_test)
+cor(as.numeric(data_test$Regions), test_predict)
+# 0.9685
+
+
+# Importance
+
+summary(model_gbm_kmeans, cBars = 10,
+        method = relative.influence, las = 2)
+
+importancia_gbm_kmeans<-data.frame(relative.influence(model_gbm_kmeans, scale. = FALSE, sort. = TRUE))
+filas<-row.names(importancia_gbm_kmeans)
+importancia_gbm_kmeans_df<-cbind(filas, importancia_gbm_kmeans)
+
+colnames(importancia_gbm_kmeans_df)[colnames(importancia_gbm_kmeans_df)%in%c("relative.influence.model_gbm_kmeans..scale....FALSE..sort....TRUE.")]<-"Importance"
+
+# Graphic
+
+ggplot(
+  data = importancia_gbm_kmeans_df,
+  aes(x    = reorder(filas, Importance),
+      y    = Importance,
+      fill = Importance)
+) +
+  labs(x = "predictor", title = "Predictor's importance") +
+  geom_col() +
+  coord_flip() +
+  theme_bw() +
+  theme(legend.position = "none")
+
+
+#Fila importancia
+# var     rel.inf
+# Bio1   Bio1 51.71885419
+# Bio11 Bio11 17.91296862
+# Bio15 Bio15 10.67240624
+# Bio14 Bio14  4.64482529
+# Bio12 Bio12  2.75624901
+# Bio18 Bio18  2.72849843
+# Bio4   Bio4  1.97000429
+# evapo evapo  1.57400330
+# Bio19 Bio19  1.56720290
+# Bio17 Bio17  1.26907348
+# Bio13 Bio13  1.08024538
+# Bio3   Bio3  0.73156872
+# Bio6   Bio6  0.35595899
+# Bio16 Bio16  0.22083143
+# ph       ph  0.17214315
+# Bio10 Bio10  0.16941440
+# Bio2   Bio2  0.11501986
+# Bio8   Bio8  0.11230713
+# Bio9   Bio9  0.10589151
+# Bio7   Bio7  0.08240155
+# Bio5   Bio5  0.04013217
+

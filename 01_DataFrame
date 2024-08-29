@@ -1,0 +1,346 @@
+#****************************************************************************#
+#****************************************************************************#
+#                             DESCARGA DATOS y                               #
+#                         CONSTRUCCION DE DATA FRAME                         #
+#****************************************************************************#
+#****************************************************************************#
+
+
+
+#### *****************************  LIBRERIAS ****************************####
+
+library(raster)
+library(dplyr)
+library(sp)
+library(rgdal)
+library(sqldf)
+library(ggalt)
+library(dbscan)
+library(cba)
+library(factoextra)
+library(fpc)
+library(dbscan)
+library(leaflet)
+library(LICORS)
+library(EMCluster)
+library(FPDclustering)
+library(mapview)
+
+
+#Descargamos variables Bioclimaticas de worldclim
+#-----------------------------------------------------------------------------------
+#Con esta opción la descarga no es segura
+# wc_data1 <- getData('worldclim', var='bio', res=0.5, lon=-10, lat=55)
+# wc_data1.5 <- getData('worldclim', var='bio', res=0.5, lon=-10, lat=30)
+# wc_data2 <- getData('worldclim', var='bio', res=0.5, lon=0, lat=55)
+
+crs<-'+proj=longlat +datum=WGS84 +ellps=WGS84 +towgs84=0,0,0 '
+# 
+# bio1 <-merge(wc_data1$bio1_15,wc_data1.5$bio1_25 ,wc_data2$bio1_16)
+# bio2 <-merge(wc_data1$bio2_15,wc_data1.5$bio2_25,wc_data2$bio2_16)
+# bio3 <-merge(wc_data1$bio3_15,wc_data1.5$bio3_25,wc_data2$bio3_16)
+# bio4 <-merge(wc_data1$bio4_15,wc_data1.5$bio4_25,wc_data2$bio4_16)
+# bio5 <-merge(wc_data1$bio5_15,wc_data1.5$bio5_25,wc_data2$bio5_16)
+# bio6 <-merge(wc_data1$bio6_15,wc_data1.5$bio6_25,wc_data2$bio6_16)
+# bio7 <-merge(wc_data1$bio7_15,wc_data1.5$bio7_25,wc_data2$bio7_16)
+# bio8 <-merge(wc_data1$bio8_15,wc_data1.5$bio8_25,wc_data2$bio8_16)
+# bio9 <-merge(wc_data1$bio9_15,wc_data1.5$bio9_25,wc_data2$bio9_16)
+# bio10 <-merge(wc_data1$bio10_15,wc_data1.5$bio10_25,wc_data2$bio10_16)
+# bio11 <-merge(wc_data1$bio11_15,wc_data1.5$bio11_25,wc_data2$bio11_16)
+# bio12 <-merge(wc_data1$bio12_15,wc_data1.5$bio12_25,wc_data2$bio12_16)
+# bio13 <-merge(wc_data1$bio13_15,wc_data1.5$bio13_25,wc_data2$bio13_16)
+# bio14 <-merge(wc_data1$bio14_15,wc_data1.5$bio14_25,wc_data2$bio14_16)
+# bio15 <-merge(wc_data1$bio15_15,wc_data1.5$bio15_25,wc_data2$bio15_16)
+# bio16 <-merge(wc_data1$bio16_15,wc_data1.5$bio16_25,wc_data2$bio16_16)
+# bio17 <-merge(wc_data1$bio17_15,wc_data1.5$bio17_25,wc_data2$bio17_16)
+# bio18 <-merge(wc_data1$bio18_15,wc_data1.5$bio18_25,wc_data2$bio18_16)
+# bio19 <-merge(wc_data1$bio19_15,wc_data1.5$bio19_25,wc_data2$bio19_16)
+
+bio1_tif<-raster("C:/Users/joses/OneDrive/Documents/BD Aguilar/Trabajo/Mapas/wc2.1_30s_bio/wc2.1_30s_bio_1.tif")
+bio2_tif<-raster("C:/Users/joses/OneDrive/Documents/BD Aguilar/Trabajo/Mapas/wc2.1_30s_bio/wc2.1_30s_bio_2.tif")
+bio3_tif<-raster("C:/Users/joses/OneDrive/Documents/BD Aguilar/Trabajo/Mapas/wc2.1_30s_bio/wc2.1_30s_bio_3.tif")
+bio4_tif<-raster("C:/Users/joses/OneDrive/Documents/BD Aguilar/Trabajo/Mapas/wc2.1_30s_bio/wc2.1_30s_bio_4.tif")
+bio5_tif<-raster("C:/Users/joses/OneDrive/Documents/BD Aguilar/Trabajo/Mapas/wc2.1_30s_bio/wc2.1_30s_bio_5.tif")
+bio6_tif<-raster("C:/Users/joses/OneDrive/Documents/BD Aguilar/Trabajo/Mapas/wc2.1_30s_bio/wc2.1_30s_bio_6.tif")
+bio7_tif<-raster("C:/Users/joses/OneDrive/Documents/BD Aguilar/Trabajo/Mapas/wc2.1_30s_bio/wc2.1_30s_bio_7.tif")
+bio8_tif<-raster("C:/Users/joses/OneDrive/Documents/BD Aguilar/Trabajo/Mapas/wc2.1_30s_bio/wc2.1_30s_bio_8.tif")
+bio9_tif<-raster("C:/Users/joses/OneDrive/Documents/BD Aguilar/Trabajo/Mapas/wc2.1_30s_bio/wc2.1_30s_bio_9.tif")
+bio10_tif<-raster("C:/Users/joses/OneDrive/Documents/BD Aguilar/Trabajo/Mapas/wc2.1_30s_bio/wc2.1_30s_bio_10.tif")
+bio11_tif<-raster("C:/Users/joses/OneDrive/Documents/BD Aguilar/Trabajo/Mapas/wc2.1_30s_bio/wc2.1_30s_bio_11.tif")
+bio12_tif<-raster("C:/Users/joses/OneDrive/Documents/BD Aguilar/Trabajo/Mapas/wc2.1_30s_bio/wc2.1_30s_bio_12.tif")
+bio13_tif<-raster("C:/Users/joses/OneDrive/Documents/BD Aguilar/Trabajo/Mapas/wc2.1_30s_bio/wc2.1_30s_bio_13.tif")
+bio14_tif<-raster("C:/Users/joses/OneDrive/Documents/BD Aguilar/Trabajo/Mapas/wc2.1_30s_bio/wc2.1_30s_bio_14.tif")
+bio15_tif<-raster("C:/Users/joses/OneDrive/Documents/BD Aguilar/Trabajo/Mapas/wc2.1_30s_bio/wc2.1_30s_bio_15.tif")
+bio16_tif<-raster("C:/Users/joses/OneDrive/Documents/BD Aguilar/Trabajo/Mapas/wc2.1_30s_bio/wc2.1_30s_bio_16.tif")
+bio17_tif<-raster("C:/Users/joses/OneDrive/Documents/BD Aguilar/Trabajo/Mapas/wc2.1_30s_bio/wc2.1_30s_bio_17.tif")
+bio18_tif<-raster("C:/Users/joses/OneDrive/Documents/BD Aguilar/Trabajo/Mapas/wc2.1_30s_bio/wc2.1_30s_bio_18.tif")
+bio19_tif<-raster("C:/Users/joses/OneDrive/Documents/BD Aguilar/Trabajo/Mapas/wc2.1_30s_bio/wc2.1_30s_bio_19.tif")
+
+
+biovar<-stack(bio1_tif,bio2_tif,bio3_tif,bio4_tif,bio5_tif,bio6_tif,bio7_tif,bio8_tif,bio9_tif,bio10_tif,bio11_tif,bio12_tif,bio13_tif,bio14_tif,bio15_tif,bio16_tif,bio17_tif,bio18_tif,bio19_tif)
+biovar 
+
+#Leemos archivos shapefile con los poligonos
+
+setwd("C:/Users/joses/OneDrive/Documents/BD Aguilar/Trabajo/Mapas/cartografia")
+
+polygon_spain <- readRDS("~/BD Aguilar/Trabajo/Mapas/cartografia/ESP_adm1.rds")
+polygon_france <- readRDS("~/BD Aguilar/Trabajo/Mapas/cartografia/FRA_adm1.rds")
+polygon_marruecos <- readRDS("~/BD Aguilar/Trabajo/Mapas/cartografia/MAR_adm1.rds")
+polygon_portugal <- readRDS("~/BD Aguilar/Trabajo/Mapas/cartografia/PRT_adm1.rds")
+
+
+a<-union(polygon_spain, polygon_france)
+b<-union(polygon_portugal,polygon_marruecos)
+c<-union(a,b)
+
+plot(c)
+
+#Extraemos valores de variables bioclimaticas para las coordenadas de la extension de estudio
+
+mascara<-mask(biovar,c)
+recorte<-crop(mascara,c)
+
+#Regiones Bioclimáticas
+regiones_ambientales<-raster::extract(biovar,recorte@extent)
+regiones_ambientales<-na.omit(regiones_ambientales)
+
+# crear puntos aleatorios en la extensión recorte
+points <- spsample(as(c, 'SpatialPolygons'),n=15000000, type="random")
+regiones_ambientales<-raster::extract(biovar,points)
+
+points_df<-as.data.frame(points@coords)
+
+regiones_ambientales<-cbind(points_df,regiones_ambientales)
+regiones_ambientales<-na.omit(regiones_ambientales)
+
+#Evapotranspiracion 2019
+#--------------------------------------------------------------------------
+setwd ("C:/Users/joses/OneDrive/Documents/BD Aguilar/Trabajo/BBDD_General/INDICES DIVERSIDAD/BIO/ETanual")
+evapo <- raster("et0_yr.tif")
+#Evapotranspiracion anual:LAs zonas con mayor evapotranspiracipon son las que tienen valor por encima de 2000
+regiones_evapo<-raster::extract(evapo,points)
+regiones_evapo<-cbind(points_df,regiones_evapo)
+regiones_evapo<-na.omit(regiones_evapo)
+
+
+#DATOS SUELOS - PHH2O
+#--------------------------------------------------------------------------
+
+#Descarga datos ISRIC mas actuales
+library(rgdal)
+library(gdalUtils)
+library(raster)
+library(sf)
+library(tidyverse)
+library(ggspatial)
+
+ph <- raster("https://files.isric.org/soilgrids/latest/data/phh2o/phh2o_0-5cm_mean.vrt")
+ph
+
+deptos <- st_read("C:/Users/joses/OneDrive/Documents/BD Aguilar/Trabajo/Mapas/cartografia/ESP_adm_shp/ESP_adm0.shp")
+deptos1 <- st_read("C:/Users/joses/OneDrive/Documents/BD Aguilar/Trabajo/Mapas/cartografia/MAR_adm_shp/MAR_adm0.shp")
+deptos2 <-st_read("C:/Users/joses/OneDrive/Documents/BD Aguilar/Trabajo/Mapas/cartografia/FRA_adm_shp/FRA_adm0.shp")
+#myExtent <- readOGR("C:/Users/jose/Documents/BD Aguilar/Trabajo/Mapas/cartografia/ESP_adm_shp/ESP_adm0.shp")
+#crs(myExtent)<-crs
+
+igh <- '+proj=igh +lat_0=0 +lon_0=0 +datum=WGS84 +units=m +no_defs'
+spain_igh <- st_transform(deptos, igh)
+fra_igh <- st_transform(deptos2, igh)
+mar_igh <-st_transform(deptos1,igh)
+
+#Area de Peninsula iberica y Marruecos
+
+area <- st_bbox(spain_igh)
+area
+
+ulx <- area$xmin
+uly <- area$ymax
+lrx <- area$xmax
+lry <- area$ymin
+limites <- c(ulx, uly, lrx, lry)
+limites
+
+area1 <-st_bbox(mar_igh)
+area1
+ulx1 <- area1$xmin
+uly1 <- area1$ymax
+lrx1 <- area1$xmax
+lry1<- area1$ymin
+limites1 <- c(ulx1, uly1, lrx1, lry1)
+limites1
+
+
+#Area de Francia
+area2 <- st_bbox(fra_igh)
+area2
+
+ulx2 <- area2$xmin
+uly2 <- area2$ymax
+lrx2 <- area2$xmax
+lry2 <- area2$ymin
+limites2 <- c(ulx2, uly2, lrx2, lry2)
+limites2
+
+
+
+#Descarga de achivo ph en TIF y recorte del mapa con la extension de Peninsuloa iberica y Marruecos
+
+sg_url <- "/vsicurl/https://files.isric.org/soilgrids/latest/data/phh2o/phh2o_0-5cm_mean.vrt"
+lfile <- "C:/Users/joses/OneDrive/Documents/BD Aguilar/Trabajo/Mapas/PH_ISRIC/PHH2O.tif"
+
+library(gdalUtils)
+
+gdal_translate(sg_url, lfile ,
+               tr = c(250,250),
+               projwin = limites,
+               projwin_srs = igh,
+               verbose = TRUE)
+ph_spain_maroc <- raster("C:/Users/joses/OneDrive/Documents/BD Aguilar/Trabajo/Mapas/PH_ISRIC/PHH2O.tif")/10
+plot(ph_spain_maroc)
+
+corte_area <- ph_spain_maroc %>% 
+  crop(spain_igh)
+
+plot(corte_area)
+
+
+nuevo_sistema <- "+proj=longlat +datum=WGS84 +ellps=WGS84 +towgs84=0,0,0"
+prueba <- projectRaster(ph_spain_maroc, crs = nuevo_sistema)
+
+# Corte
+ejemplo_sf <- st_as_sf(deptos)
+
+prueba_ejemplo <- prueba %>% 
+  crop(ejemplo_sf) 
+
+plot(prueba_ejemplo)
+
+#Descarga de achivo ph en TIF y recorte del mapa con la extension de Marruecos
+
+sg_url <- "/vsicurl/https://files.isric.org/soilgrids/latest/data/phh2o/phh2o_0-5cm_mean.vrt"
+lfile <- "C:/Users/joses/OneDrive/Documents/BD Aguilar/Trabajo/Mapas/PH_ISRIC/PHH2O_mar.tif"
+
+library(gdalUtils)
+
+gdal_translate(sg_url, lfile ,
+               tr = c(250,250),
+               projwin = limites1,
+               projwin_srs = igh,
+               verbose = TRUE)
+ph_maroc <- raster("C:/Users/joses/OneDrive/Documents/BD Aguilar/Trabajo/Mapas/PH_ISRIC/PHH2O_mar.tif")/10
+plot(ph_maroc)
+
+corte_area1 <- ph_maroc %>% 
+  crop(mar_igh)
+
+plot(corte_area1)
+
+
+nuevo_sistema <- "+proj=longlat +datum=WGS84 +ellps=WGS84 +towgs84=0,0,0"
+prueba1 <- projectRaster(ph_maroc, crs = nuevo_sistema)
+
+# Corte
+ejemplo_sf1 <- st_as_sf(deptos1)
+
+prueba_ejemplo1 <- prueba1 %>% 
+  crop(ejemplo_sf1) 
+
+plot(prueba_ejemplo1)
+
+
+#Descarga de achivo ph en TIF y recorte del mapa con la extension de Francia
+
+sg_url <- "/vsicurl/https://files.isric.org/soilgrids/latest/data/phh2o/phh2o_0-5cm_mean.vrt"
+lfile <- "C:/Users/joses/OneDrive/Documents/BD Aguilar/Trabajo/Mapas/PH_ISRIC/PHH2O_fra.tif"
+
+library(gdalUtils)
+
+gdal_translate(sg_url, lfile ,
+               tr = c(250,250),
+               projwin = limites2,
+               projwin_srs = igh,
+               verbose = TRUE)
+ph_france <- raster("C:/Users/joses/OneDrive/Documents/BD Aguilar/Trabajo/Mapas/PH_ISRIC/PHH2O_fra.tif")/10
+plot(ph_france)
+
+corte_area2 <- ph_france %>% 
+  crop(fra_igh)
+
+plot(corte_area2)
+
+prueba2 <- projectRaster(ph_france, crs = nuevo_sistema)
+
+# Corte
+ejemplo_sf2 <- st_as_sf(deptos2)
+
+prueba_ejemplo2 <- prueba2 %>% 
+  crop(ejemplo_sf2) 
+
+plot(prueba_ejemplo2)
+
+#extraemos valores de Ph para las coordenadas del estudio
+regiones_ph<-raster::extract(prueba,points)
+regiones_ph<-cbind(points_df,regiones_ph)
+regiones_ph<-na.omit(regiones_ph)
+
+regiones_ph1<-raster::extract(prueba1,points)
+regiones_ph1<-cbind(points_df,regiones_ph1)
+regiones_ph1<-na.omit(regiones_ph1)
+
+regiones_ph2<-raster::extract(prueba2,points)
+regiones_ph2<-cbind(points_df,regiones_ph2)
+regiones_ph2<-na.omit(regiones_ph2)
+
+
+# Creacion de DATASET con la union de todos los campos
+#--------------------------------------------------------------------------
+
+colnames(regiones_ph1)[colnames(regiones_ph1)%in%c("regiones_ph1")]<-c("regiones_ph")
+colnames(regiones_ph2)[colnames(regiones_ph2)%in%c("regiones_ph2")]<-c("regiones_ph")
+#regiones_ph <-rbind(regiones_ph,regiones_ph1,regiones_ph2)
+regiones_ph <-rbind(regiones_ph,regiones_ph2)
+DF <- sqldf("select a.*,regiones_evapo,regiones_ph from regiones_ambientales as a,
+            regiones_evapo as b,
+            regiones_ph as c
+            where a.x=b.x and a.y=b.y and a.x=c.x and a.y=c.y")
+
+
+
+colnames(DF)[colnames(DF)%in%c("x","y","layer.1","layer.2",
+                               "layer.3","layer.4","layer.5",
+                               "layer.6","layer.7","layer.8",
+                               "layer.9","layer.10","layer.11",
+                               "layer.12","layer.13","layer.14",
+                               "layer.15","layer.16","layer.17",
+                               "layer.18","layer.19", "regiones_evapo","regiones_ph")]<-c("lon","lat","Bio1","Bio2","Bio3","Bio4","Bio5","Bio6",
+                                                                                          "Bio7","Bio8","Bio9","Bio10","Bio11","Bio12","Bio13","Bio14",
+                                                                                          "Bio15","Bio16","Bio17","Bio18","Bio19","evapo","ph")
+
+#Creo polinomio de tercer grado
+
+DF <- DF %>%
+  mutate(lat2=lat*lat,
+         latlon = lat*lon,
+         lon2 = lon^2,
+         lat3 = lat^3,
+         lat2lon = lat^2*lon,
+         latlon2 = lat*lon^2,
+         lon3 = lon^3)
+
+DF <- DF %>% mutate(poli3=lat + lon + lat2 + latlon + 
+                      lon2 + lat3 + lat2lon + latlon2 + lon3)
+
+# Save .Rdata
+save(DF,file="C:/Users/jose/Documents/BD Aguilar/Trabajo/BBDD_General/REGIONALIZACION/datos_regionalizacion.RData")
+
+
+# Limpieza de datos
+
+rm(wc_data1,wc_data1.5,ph_maroc,wc_data2,recortehwsd,polygon_france,polygon_marruecos,polygon_portugal
+   ,polygon_spain, points_df,points,ph,ph_france,ph_spain_maroc,mascara,mascarahwsd,hwsd, mar_igh)
+rm(c,corte_area, corte_area1,corte_area2,deptos, deptos1,deptos2,ejemplo_sf,ejemplo_sf2,evapo,fra_igh,prueba,prueba1,regiones_ph1, regiones_ph2,prueba_ejemplo, prueba_ejemplo2,prueba2,
+   recorte, spain_igh, limites1, lrx1,lry1,ulx1,uly1, area1)
+rm(area,area1,area2,crs,igh,lfile,limites,limites2,lrx,lrx2,lry,lry2,nuevo_sistema,sg_url, ulx,ulx2,uly,uly2)
+rm(bio1_tif,bio2_tif,bio3_tif,bio4_tif,bio5_tif,bio6_tif,bio7_tif,bio8_tif,bio9_tif,bio10_tif,bio11_tif,bio12_tif,bio13_tif,bio14_tif,bio15_tif,bio16_tif,bio17_tif,bio18_tif,bio19_tif)
+
